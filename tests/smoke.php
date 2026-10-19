@@ -157,6 +157,34 @@ $admin  = file_get_contents( $plugin . 'includes/class-dbb-admin.php' );
 $js     = file_get_contents( $plugin . 'assets/js/admin.js' );
 $imp    = file_get_contents( $plugin . 'includes/class-dbb-importer.php' );
 
+/* 0) "Eklenti dosyası bulunamadı" (Plugin file does not exist) karşıtı:
+   ana dosya + başlık + aktivasyon hook'u doğru olmalı. */
+$mainf = $plugin . 'doktor-brown-backup.php';
+check( 'activate: ana eklenti dosyası mevcut', is_file( $mainf ) );
+$head = file_get_contents( $mainf );
+check(
+	'activate: Plugin Name başlığı okunabiliyor (WP get_plugins)',
+	false !== strpos( $head, 'Plugin Name:       Doktor Brown Backup' )
+);
+check(
+	'activate: Plugin URI gerçek GitHub adresine işaret ediyor (example.com yok)',
+	false !== strpos( $head, 'https://github.com/akamaci/doktor-brown-backup' )
+			&& false === strpos( $head, 'example.com' )
+);
+check(
+	'activate: başlık sürümü 1.1.0 ile tutarlı',
+	false !== strpos( $head, '* Version:           1.1.0' )
+			&& false !== strpos( $head, "DBB_VERSION', '1.1.0'" )
+);
+check(
+	'activate: register_activation_hook ana dosyayı kullanıyor',
+	false !== strpos( $head, "register_activation_hook( __FILE__, array( 'DBB_Plugin', 'activate' ) )" )
+);
+check(
+	'activate: DBB_Plugin sınıfı require ediliyor',
+	false !== strpos( $head, "require_once DBB_PATH . 'includes/class-dbb-plugin.php';" )
+);
+
 /* 1) Sürükle-bırak alanı gerçekten düzenlenmiş mi? */
 check(
 	'ui: geri yükleme sayfasında sürükle-bırak alanı (dbb-dropzone) var',

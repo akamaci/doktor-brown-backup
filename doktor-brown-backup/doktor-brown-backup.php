@@ -1,12 +1,13 @@
 <?php
 /**
  * Plugin Name:       Doktor Brown Backup
- * Plugin URI:        https://example.com/doktor-brown-backup
+ * Plugin URI:        https://github.com/akamaci/doktor-brown-backup
  * Description:       Bağımsız WordPress yedekleme eklentisi. Siteyi (dosyalar + veritabanı) tek bir .dbb arşivine aktarır ve geri yükler. Parçalı (chunked) çalışır; telemetri, lisans veya uzak servis içermez.
- * Version:           1.0.0
+ * Version:           1.1.0
  * Requires at least: 5.6
  * Requires PHP:      7.4
- * Author:            Doktor Brown
+ * Author:            Doktor Brown Backup
+ * Author URI:        https://github.com/akamaci/doktor-brown-backup
  * License:           GPL-2.0-or-later
  * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain:       doktor-brown-backup
