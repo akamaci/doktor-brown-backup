@@ -1,0 +1,8 @@
+# Yerel / geçici
+Thumbs.db
+.DS_Store
+*.log
+
+# Derleme/arşivleme (repoya ZIP koymuyoruz — GitHub Release asset'i olacak)
+*.zip
+!tests/**
