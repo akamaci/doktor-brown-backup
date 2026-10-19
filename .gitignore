@@ -6,3 +6,6 @@ Thumbs.db
 # Derleme/arşivleme (repoya ZIP koymuyoruz — GitHub Release asset'i olacak)
 *.zip
 !tests/**
+
+# Yerel notlar (mojibake + makine yolu) — repo'da YOK
+00-*.md
