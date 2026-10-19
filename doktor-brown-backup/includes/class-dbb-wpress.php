@@ -1,6 +1,6 @@
 <?php
 /**
- * Reader for All-in-One WP Migration ".wpress" archives.
+ * Reader for ".wpress" archives.
  *
  * Block format (4377-byte header per entry), per ServMask Ai1wm_Archiver:
  *   name    offset    0  length 255   filename (no path)

@@ -178,6 +178,7 @@ final class DBB_Plugin {
 			'dbb_export_start'  => array( $this->exporter, 'ajax_start' ),
 			'dbb_export_step'   => array( $this->exporter, 'ajax_step' ),
 			'dbb_import_start'  => array( $this->importer, 'ajax_start' ),
+			'dbb_import_resume' => array( $this->importer, 'ajax_resume' ),
 			'dbb_import_upload' => array( $this->importer, 'ajax_upload' ),
 			'dbb_import_step'   => array( $this->importer, 'ajax_step' ),
 			'dbb_restore_backup' => array( $this->importer, 'ajax_restore' ),

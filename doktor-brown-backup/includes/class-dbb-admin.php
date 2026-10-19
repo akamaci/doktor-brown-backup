@@ -97,6 +97,8 @@ class DBB_Admin {
 					'confirmDel' => __( 'Bu yedeği silmek istediğinize emin misiniz?', 'doktor-brown-backup' ),
 					'pickFile'   => __( 'Lütfen bir .dbb veya .wpress dosyası seçin.', 'doktor-brown-backup' ),
 					'badExt'     => __( 'Desteklenmeyen dosya türü. Yalnızca .dbb ve .wpress uzantılı dosyalar desteklenir.', 'doktor-brown-backup' ),
+					'resumeAsk'  => __( 'Yarıda kalan bir yükleme bulundu. Kaldığı yerden devam edilsin mi?', 'doktor-brown-backup' ),
+					'resuming'   => __( 'Kaldığı yerden devam ediliyor…', 'doktor-brown-backup' ),
 					'confirmRestore' => __( 'Bu yedeği geri yüklemek mevcut siteyi tamamen değiştirir. Devam edilsin mi?', 'doktor-brown-backup' ),
 				),
 			)

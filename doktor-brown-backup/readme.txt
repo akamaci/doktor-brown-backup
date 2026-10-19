@@ -4,7 +4,7 @@ Tags: backup, restore, migration, database, export
 Requires at least: 5.6
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 1.1.0
+Stable tag: 1.2.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -15,8 +15,8 @@ Bağımsız WordPress yedekleme eklentisi. Siteyi (dosyalar + veritabanı) tek b
 Doktor Brown Backup, herhangi bir ücretli eklentiye veya uzak servise ihtiyaç duymadan
 WordPress sitenizin tam yedeğini alır ve geri yükler.
 
-* Tüm site dosyaları + veritabanı → tek `.dbb` arşivi (ZIP tabanlı).
-* **`.wpress` (All-in-One WP Migration) arşivlerini içe aktarma** desteği.
+* Tüm site dosyaları + veritabanı → tek `.dbb` arşivine paketler ve geri yükler.
+* **`.wpress` arşivlerini içe aktarma** desteği.
 * **Parçalı (chunked) çalışma**: büyük sitelerde zaman aşımı/`memory_limit` sorunu yaşatmaz.
 * **Otomatik alan adı değiştirme**: localhost → canlı domain geçişinde eski adres
   arşivden okunur ve yeni adresle **serileştirme-güvenli** biçimde değiştirilir.
@@ -44,6 +44,13 @@ otomatik hariç tutulur (`dbb_export_excludes` filtresiyle değiştirilir).
 
 == Changelog ==
 
+= 1.2.0 =
+* **Kaldığı yerden devam (resume):** yükleme ağ kesintisinde koparsa yarım
+  kalmış işi sorar, kabul edilen bayttan devam eder (min 256KB parça küçültme).
+* **Çift-parça korunumu:** sunucuda zaten yazılmış bölge atlanır, "received" baytıyla devam.
+* **Sıra bozulması koruması:** boşluklu parça 409 ile reddedilir (arşiv bozulmaz).
+* Yeni AJAX: `dbb_import_resume`; yeni i18n: `resumeAsk`, `resuming`.
+
 = 1.1.0 =
 * Yükleme %4'te takılmıyor: parça boyutu sunucu gerçek yükleme sınırından
   hesaplanır; reddedilince parça yarıya düşürülüp otomatik yeniden denenir.
@@ -53,6 +60,9 @@ otomatik hariç tutulur (`dbb_export_excludes` filtresiyle değiştirilir).
 * İlk sürüm: dışa aktarma, içe aktarma, liste/indir/sil, parçalı işlem.
 
 == Upgrade Notice ==
+
+= 1.2.0 =
+Kaldığı yerden devam (resume) + çift-parça/sıra koruması.
 
 = 1.1.0 =
 Sürükle-bırak alanı + daha dayanıklı parçalı yükleme.

@@ -1,6 +1,6 @@
 # Doktor Brown Backup
 
-Bağımsız **WordPress yedekleme/geri yükleme** eklentisi. Siteyi (dosyalar + veritabanı) tek bir `.dbb` arşivine paketler ve geri yükler. Ayrıca **`.wpress`** (All-in-One WP Migration) arşivlerini içe aktarır. Parçalı (chunked) çalışır; **telemetri, lisans sunucusu, WASM veya uzak çağrı içermez.**
+Bağımsız **WordPress yedekleme/geri yükleme** eklentisi. Siteyi (dosyalar + veritabanı) tek bir `.dbb` arşivine paketler ve geri yükler. Ayrıca **`.wpress`** arşivlerini içe aktarır. Parçalı (chunked) çalışır; **telemetri, lisans sunucusu, WASM veya uzak çağrı içermez.**
 
 ## Özellikler
 
@@ -73,5 +73,5 @@ markasız not, dinamik parça boyutu, otomatik yeniden deneme).
 
 ## Lisans
 
-GPL-2.0-or-later. Kod, ücretli "All-in-One WP Migration Unlimited" eklentisinin
-incelenmesiyle yeniden yazılmış **özgün** bir uygulamadır; kırık/pirate sürüm dahil edilmez.
+GPL-2.0-or-later. Kod, başka bir ücretli eklentinin incelenmesiyle yeniden
+yazılmış **özgün** bir uygulamadır; kırık/pirate sürüm dahil edilmez.

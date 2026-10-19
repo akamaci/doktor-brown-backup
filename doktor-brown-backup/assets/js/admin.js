@@ -197,19 +197,58 @@
 		$btn.prop( 'disabled', true );
 		setProgress( $box, 1, DBB.i18n.starting );
 
-		post( 'dbb_import_start' )
-			.done( function ( res ) {
-				if ( ! res || ! res.success ) {
-					setProgress( $box, 0, ( res && res.data && res.data.message ) || DBB.i18n.error );
-					$btn.prop( 'disabled', false );
-					return;
-				}
-				upload( res.data.job, 0, initialChunkSize() );
-			} )
-			.fail( function () {
-				setProgress( $box, 0, DBB.i18n.error );
-				$btn.prop( 'disabled', false );
-			} );
+		/* v1.2.0 — "kaldığı yerden devam": önce sunucuda yarım kalmış bir
+		   yükleme var mı bakarız; varsa kullanıcıya sorarız. Onaylarsa
+		   aynı job + `bytes` (sunucudaki gerçek bayt) ile devam ederiz;
+		   hayır derse `dbb_import_start` ile temiz başlarız. */
+		resumeStart( target, auto, $box, $btn );
+
+		function resumeStart( t, a, $bx, $bn ) {
+			post( 'dbb_import_resume' )
+				.done( function ( r ) {
+					var job = r && r.success && r.data && r.data.job ? r.data.job : null;
+					if ( job ) {
+						var resumeBytes = ( r.data.bytes || 0 );
+						var yuzde = Math.round( 3 + 35 * ( resumeBytes / file.size ) );
+						var msg = DBB.i18n.resumeAsk + ' (' + formatBytes( resumeBytes ) + ' / %' + yuzde + ')';
+						if ( ! window.confirm( msg ) ) {
+							freshStart( t, a, $bx, $bn );
+							return;
+						}
+						if ( resumeBytes >= file.size ) {
+							// Dosya tamam ama işlem yarıda (upload bitti, step değil):
+							// kaldığı yerden devam — bu durumda processJob yeterli.
+							setProgress( $bx, 40, DBB.i18n.importing );
+							processJob( job, t, a, $bx, $bn );
+							return;
+						}
+						setProgress( $bx, Math.max( 1, yuzde ), DBB.i18n.resuming + ' %' + yuzde );
+						upload( job, resumeBytes, initialChunkSize() );
+						return;
+					}
+					freshStart( t, a, $bx, $bn );
+				} )
+				.fail( function () {
+					// Resume sorgusu başarısız → yine de taze başlat.
+					freshStart( t, a, $bx, $bn );
+				} );
+		}
+
+		function freshStart( t, a, $bx, $bn ) {
+			post( 'dbb_import_start' )
+				.done( function ( res ) {
+					if ( ! res || ! res.success ) {
+						setProgress( $bx, 0, ( res && res.data && res.data.message ) || DBB.i18n.error );
+						$bn.prop( 'disabled', false );
+						return;
+					}
+					upload( res.data.job, 0, initialChunkSize() );
+				} )
+				.fail( function () {
+					setProgress( $bx, 0, DBB.i18n.error );
+					$bn.prop( 'disabled', false );
+				} );
+		}
 
 		/* v1.1.0 — %4'te takılma düzeltmesi:
 		   1. Parça boyutu sunucu limitinden güvenli payla hesaplanır (admin.php),
@@ -250,9 +289,12 @@
 						}
 						return;
 					}
-					var pct = 3 + Math.round( 35 * ( ( offset + slice.size ) / file.size ) );
+					// Sunucu kabul etti. `received` = sunucudaki gerçek bayt
+					// sayısı (resume'da offset'ten farklı olabilir).
+					var received = res.data && typeof res.data.received === 'number' ? res.data.received : ( offset + slice.size );
+					var pct = 3 + Math.round( 35 * ( received / file.size ) );
 					setProgress( $box, pct, DBB.i18n.uploading + ' ' + pct + '%' );
-					upload( job, offset + slice.size, chunk );
+					upload( job, received, chunk );
 				} )
 				.fail( function () {
 					// Ağ hatası / sunucu yanıt yok → küçültüp tekrar dene.

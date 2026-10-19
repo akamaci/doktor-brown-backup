@@ -1,6 +1,6 @@
 <?php
 /**
- * Importer: restores a .dbb (ZIP) or .wpress (All-in-One WP Migration) archive.
+ * Importer: restores a .dbb (ZIP) or .wpress archive.
  *
  * Supports: chunked upload, archive detection, chunked extraction, database
  * restore, serialization-safe domain search/replace, and file restore.
@@ -27,6 +27,102 @@ class DBB_Importer {
 	/* ------------------------------------------------------------------ */
 	/* AJAX wrappers                                                       */
 	/* ------------------------------------------------------------------ */
+
+	/**
+	 * AJAX: resume an interrupted upload from where it left off.
+	 *
+	 * Returns the most recent uploaded-but-not-processed job and the bytes
+	 * already accepted by the server. The client can then continue sending
+	 * chunks from that offset instead of restarting from zero.
+	 *
+	 * @return void
+	 */
+	public function ajax_resume() {
+		DBB_Plugin::verify_request();
+		$res = $this->resume_state();
+		if ( ! $res ) {
+			wp_send_json_success( array( 'job' => null ) );
+			return;
+		}
+		$bytes = 0;
+		if ( ! empty( $res['archive'] ) && is_file( $res['archive'] ) ) {
+			$bytes = (int) filesize( $res['archive'] );
+		}
+		wp_send_json_success(
+			array(
+				'job'     => isset( $res['job'] ) ? $res['job'] : '',
+				'bytes'   => $bytes,
+				'step'    => isset( $res['step'] ) ? $res['step'] : '',
+			)
+		);
+	}
+
+	/**
+	 * Find the most recent job that is still mid-upload.
+	 *
+	 * @return array|null
+	 */
+	private function resume_state() {
+		if ( ! is_dir( DBB_TMP_DIR ) ) {
+			return null;
+		}
+		$cands = array();
+		foreach ( (array) scandir( DBB_TMP_DIR ) as $d ) {
+			if ( 0 !== strpos( $d, 'imp-' ) ) {
+				continue;
+			}
+			$state = $this->load_state( $d );
+			if ( ! is_array( $state ) || empty( $state['step'] ) || 'upload' !== $state['step'] ) {
+				continue;
+			}
+			$cands[] = $state;
+		}
+		if ( empty( $cands ) ) {
+			// Fallback: any state that never finished processing.
+			foreach ( (array) glob( DBB_TMP_DIR . '/imp-*/state.json' ) as $state_file ) { // phpcs:ignore
+				$state = json_decode( file_get_contents( $state_file ), true ); // phpcs:ignore
+				if ( is_array( $state ) && isset( $state['status'] ) && 'uploading' === $state['status'] ) {
+					$cands[] = $state;
+				}
+			}
+		}
+		if ( empty( $cands ) ) {
+			return null;
+		}
+		usort(
+			$cands,
+			function ( $a, $b ) {
+				$a_t = isset( $a['created'] ) ? (int) $a['created'] : 0;
+				$b_t = isset( $b['created'] ) ? (int) $b['created'] : 0;
+				return $b_t - $a_t;
+			}
+		);
+		return $cands[0];
+	}
+
+	/**
+	 * Delete leftover upload jobs (disk + state) before a fresh start.
+	 *
+	 * Used when the user chose "restart from zero" instead of resuming.
+	 * Kept resumable until actually replaced so an interrupted upload is
+	 * never silently lost by an empty retry.
+	 *
+	 * @return void
+	 */
+	private function purge_upload_jobs() {
+		if ( ! is_dir( DBB_TMP_DIR ) ) {
+			return;
+		}
+		foreach ( (array) scandir( DBB_TMP_DIR ) as $d ) {
+			if ( 0 !== strpos( $d, 'imp-' ) || ! is_dir( DBB_TMP_DIR . '/' . $d ) ) {
+				continue;
+			}
+			$state = $this->load_state( $d );
+			if ( is_array( $state ) && isset( $state['step'] ) && 'upload' === $state['step'] ) {
+				$this->rmdir_recursive( DBB_TMP_DIR . '/' . $d );
+			}
+		}
+	}
 
 	/**
 	 * AJAX: create an import job.
@@ -81,6 +177,26 @@ class DBB_Importer {
 		$chunk_len = (int) filesize( $tmp );
 		if ( $chunk_len < 0 ) {
 			wp_send_json_error( array( 'message' => __( 'Parça okunamadı.', 'doktor-brown-backup' ) ), 400 );
+		}
+
+		/* v1.2.0 — kaldığı yerden devam: parça, sunucuda ZATEN kabul
+		   edilmiş baytlara denk geliyorsa (çift gönderim / eski parça)
+		   yazmayı atla; gerçek `received` değerini döndür ki istemci
+		   doğru noktadan devam etsin. `offset` disk boyutunu AŞIYORSA
+		   araya boşluk bırakmamak için parçayı reddet (409). */
+		$disk_ok = 0;
+		if ( is_file( $state['archive'] ) ) {
+			$disk_ok = (int) filesize( $state['archive'] );
+		}
+		if ( $offset > $disk_ok ) {
+			wp_send_json_error( array( 'message' => __( 'Parça sırası bozuk — dosya bozulmasın diye reddedildi.', 'doktor-brown-backup' ) ), 409 );
+		}
+		if ( $offset + $chunk_len <= $disk_ok ) {
+			// Bu bölge zaten yazılmış: atla, ama tmp'yi temizle.
+			@unlink( $tmp ); // phpcs:ignore
+			$state['bytes'] = max( $state['bytes'], $disk_ok );
+			$this->save_state( $state );
+			wp_send_json_success( array( 'received' => $disk_ok ) );
 		}
 
 		$in  = fopen( $tmp, 'rb' ); // phpcs:ignore
@@ -155,6 +271,13 @@ class DBB_Importer {
 		$job     = 'imp-' . gmdate( 'Ymd-His' ) . '-' . wp_generate_password( 6, false, false );
 		$job_dir = DBB_TMP_DIR . '/' . $job;
 		wp_mkdir_p( $job_dir );
+
+		/* v1.2.0 — "kaldığı yerden devam": kullanıcı işi YENİDEN
+		   başlatmayı seçtiyse, yarım kalmış upload işlerinin disk
+		   bölgesi (import.bin) temizlenir — gerçekten yeni baştan
+		   yükleneceği için. (Resume için ayrı `dbb_import_resume`
+		   akışı kullanılır; o akışta bu silme çağrılmaz.) */
+		$this->purge_upload_jobs();
 
 		$state = array(
 			'job'         => $job,

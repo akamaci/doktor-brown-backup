@@ -172,9 +172,9 @@ check(
 			&& false === strpos( $head, 'example.com' )
 );
 check(
-	'activate: başlık sürümü 1.1.0 ile tutarlı',
-	false !== strpos( $head, '* Version:           1.1.0' )
-			&& false !== strpos( $head, "DBB_VERSION', '1.1.0'" )
+	'activate: başlık sürümü 1.2.0 ile tutarlı',
+	false !== strpos( $head, '* Version:           1.2.0' )
+			&& false !== strpos( $head, "DBB_VERSION', '1.2.0'" )
 );
 check(
 	'activate: register_activation_hook ana dosyayı kullanıyor',
@@ -200,7 +200,7 @@ check(
 	false !== strpos( $admin, 'Yalnızca .dbb ve .wpress uzantılı dosyalar desteklenir.' )
 );
 check(
-	'ui: eski markalı not (Doktor Brown / All-in-One) tamamen kaldırıldı',
+	'ui: eski markalı not tamamen kaldırıldı',
 	false === strpos( $admin, 'Desteklenen: .dbb (Doktor Brown)' )
 );
 /* 3) %4 takılma düzeltmesi: chunk sunucu sınırından hesaplanıyor. */
@@ -228,6 +228,51 @@ check(
 	'upload: PHP parça limit aşımını 413 ile bildiriyor',
 	false !== strpos( $imp, 'UPLOAD_ERR_INI_SIZE === $code' )
 			&& false !== strpos( $imp, '413' )
+);
+
+/* ------------------------------------------------------------------ */
+/* v1.2.0 — kaldığı yerden devam (resume) kaynak-sözleşmesi            */
+/* ------------------------------------------------------------------ */
+
+$pluginf = file_get_contents( $plugin . 'includes/class-dbb-plugin.php' );
+
+check(
+	'resume: dbb_import_resume AJAX eylemi kayıtlı',
+	false !== strpos( $pluginf, "'dbb_import_resume' => array( \$this->importer, 'ajax_resume' )" )
+);
+check(
+	'resume: importer ajax_resume tanımlı',
+	false !== strpos( $imp, 'public function ajax_resume()' )
+			&& false !== strpos( $imp, 'resume_state()' )
+);
+check(
+	'resume: start() yeni işten önce eski yarım işi temizliyor (purge)',
+	false !== strpos( $imp, 'purge_upload_jobs()' )
+			&& false !== strpos( $imp, 'private function purge_upload_jobs' )
+);
+check(
+	'resume: upload çift-parça bölgesini atlayıp received döndürüyor',
+	false !== strpos( $imp, '$offset + $chunk_len <= $disk_ok' )
+			&& false !== strpos( $imp, "'received' => \$disk_ok" )
+);
+check(
+	'resume: upload sıra bozulmasını 409 ile reddediyor (boşluk yok)',
+	false !== strpos( $imp, '409' )
+			&& false !== strpos( $imp, 'Parça sırası bozuk' )
+);
+check(
+	'resume: JS devamı sunucu received değerine göre sürdürüyor',
+	false !== strpos( $js, 'res.data.received' )
+);
+check(
+	'resume: JS önce dbb_import_resume çağırıyor (başlat öncesi)',
+	false !== strpos( $js, "'dbb_import_resume'" )
+			&& false !== strpos( $js, 'DBB.i18n.resumeAsk' )
+);
+check(
+	'resume: i18n resumeAsk + resuming anahtarları ekli',
+	false !== strpos( $admin, "'resumeAsk'" )
+			&& false !== strpos( $admin, "'resuming'" )
 );
 
 /* ------------------------------------------------------------------ */
