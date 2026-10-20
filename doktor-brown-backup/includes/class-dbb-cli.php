@@ -94,6 +94,8 @@ class DBB_CLI {
 	 * ## EXAMPLES
 	 *
 	 *     wp dbb restore backup-20261018-144809.dbb
+	 *     wp dbb restore backup-20261018-144809.dbb --url=https://example.com
+	 *     wp dbb restore backup-20261018-144809.dbb --force
 	 *
 	 * @param array $args       Positional args.
 	 * @param array $assoc_args Associative args.
@@ -105,7 +107,16 @@ class DBB_CLI {
 		$auto = ! isset( $assoc_args['no-domain'] );
 
 		$engine = new DBB_Importer();
-		$res    = $engine->prepare_from_backup( $file, $url, $auto );
+		$pre    = DBB_Preflight::run( $file );
+		foreach ( $pre['checks'] as $check ) {
+			if ( 'fail' === $check['status'] || 'warn' === $check['status'] ) {
+				WP_CLI::log( sprintf( '[%s] %s: %s', strtoupper( $check['status'] ), $check['label'], $check['detail'] ) );
+			}
+		}
+		if ( ! $pre['ok'] && ! isset( $assoc_args['force'] ) ) {
+			WP_CLI::error( 'Ön kontrol başarısız. Düzeltin veya --force kullanın.' );
+		}
+		$res = $engine->prepare_from_backup( $file, $url, $auto );
 		if ( isset( $res['error'] ) ) {
 			WP_CLI::error( $res['error'] );
 		}

@@ -108,6 +108,7 @@ check( 'list_files: excludes cache', ! $has_cache );
 check( 'is_excluded: cache true', DBB_Filesystem::is_excluded( 'wp-content/cache/x.tmp' ) );
 check( 'is_excluded: uploads false', ! DBB_Filesystem::is_excluded( 'wp-content/uploads/a.jpg' ) );
 check( 'is_excluded: wp-config.php true', DBB_Filesystem::is_excluded( 'wp-config.php' ) );
+check( 'is_excluded: *-backups klasörü true', DBB_Filesystem::is_excluded( 'wp-content/site-backups/x.wpress' ) );
 check( 'resolve: blocks traversal', false === DBB_Filesystem::resolve( '../../etc/passwd' ) );
 check( 'resolve: normal path', false !== strpos( (string) DBB_Filesystem::resolve( 'wp-config.php' ), 'wp-config.php' ) );
 
@@ -324,6 +325,50 @@ check(
 	false !== strpos( $imp, "'db-safety'" )
 			&& false !== strpos( $imp, 'step_db_safety' )
 			&& false !== strpos( $imp, 'pre-restore-' )
+);
+check(
+	'db: MySQL 8 sıkı modu ve binary/blob verisi güvenli',
+	false !== strpos( $dbf, "SET SESSION sql_mode=''" )
+			&& false !== strpos( $dbf, 'bin2hex' )
+			&& false !== strpos( $dbf, "'0x' . \$hex" )
+			&& false !== strpos( $dbf, "'' === \$hex" )
+);
+check(
+	'import: tarayıcı kapansa da adım sürüyor (ignore_user_abort)',
+	false !== strpos( $pluginf, 'ignore_user_abort' )
+			&& false !== strpos( $pluginf, 'set_time_limit' )
+);
+
+$pref = file_get_contents( $plugin . 'includes/class-dbb-preflight.php' );
+$expf = file_get_contents( $plugin . 'includes/class-dbb-exporter.php' );
+$clif = file_get_contents( $plugin . 'includes/class-dbb-cli.php' );
+
+check(
+	'preflight: DB yazma + dizin yazma + disk testi var',
+	false !== strpos( $pref, 'db_probe' )
+			&& false !== strpos( $pref, 'write_probe' )
+			&& false !== strpos( $pref, 'disk_free_space' )
+			&& false !== strpos( $pref, 'CREATE TABLE' )
+);
+check(
+	'preflight: AJAX + arayüz + son onay kutusu',
+	false !== strpos( $pluginf, "'dbb_preflight'" )
+			&& false !== strpos( $admin, 'id="dbb-preflight"' )
+			&& false !== strpos( $admin, 'id="dbb-confirm-overwrite"' )
+			&& false !== strpos( $js, 'runPreflight' )
+			&& false !== strpos( $js, 'showConfirm' )
+);
+check(
+	'preflight: CLI kritik hatada durur, --force ile geçer',
+	false !== strpos( $clif, '--force' )
+			&& false !== strpos( $clif, 'DBB_Preflight::run' )
+);
+check(
+	'export: sql_mode + binary/blob hex + boş blob',
+	false !== strpos( $expf, "SET SESSION sql_mode=''" )
+			&& false !== strpos( $expf, 'dump_table' )
+			&& false !== strpos( $dbf, 'bin2hex' )
+			&& false !== strpos( $dbf, "'' === \$hex" )
 );
 check(
 	'import: wp-config.php asla geri yazılmıyor',

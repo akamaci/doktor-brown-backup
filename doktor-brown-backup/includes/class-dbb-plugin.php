@@ -53,6 +53,7 @@ final class DBB_Plugin {
 		require_once DBB_PATH . 'includes/class-dbb-replace.php';
 		require_once DBB_PATH . 'includes/class-dbb-archive.php';
 		require_once DBB_PATH . 'includes/class-dbb-wpress.php';
+		require_once DBB_PATH . 'includes/class-dbb-preflight.php';
 		require_once DBB_PATH . 'includes/class-dbb-exporter.php';
 		require_once DBB_PATH . 'includes/class-dbb-importer.php';
 		require_once DBB_PATH . 'includes/class-dbb-admin.php';
@@ -197,12 +198,19 @@ final class DBB_Plugin {
 			'dbb_delete'        => array( 'DBB_Admin', 'ajax_delete' ),
 			'dbb_list'          => array( 'DBB_Admin', 'ajax_list' ),
 			'dbb_log_client'    => array( 'DBB_Admin', 'ajax_log_client' ),
+			'dbb_preflight'     => array( 'DBB_Admin', 'ajax_preflight' ),
 		);
 
 		foreach ( $actions as $action => $callback ) {
 			add_action(
 				'wp_ajax_' . $action,
 				function () use ( $action, $callback ) {
+					// Long restore/upload steps must survive a browser tab close
+					// or a slow client, matching the behaviour users expect from
+					// a migration tool. Batching still keeps each request short.
+					@ignore_user_abort( true ); // phpcs:ignore
+					@set_time_limit( 0 ); // phpcs:ignore
+					@ini_set( 'max_input_time', '-1' ); // phpcs:ignore
 					DBB_Logger::request( $action );
 					call_user_func( $callback );
 				}

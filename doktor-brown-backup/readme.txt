@@ -31,6 +31,12 @@ WordPress sitenizin tam yedeğini alır ve geri yükler.
   `wp-content/dbb-logs/` altına yazılır; panelden indirilebilir.
 * **`wp-config.php` asla yedeklenmez/geri yazılmaz** (hedef sitenin DB
   bilgilerini ezmesin diye).
+* **Ön kontrol + son onay:** geri yüklemeden önce veritabanına geçici tablo
+  yazılıp silinir, dizinlere probe dosyası yazılır, disk alanı ölçülür ve
+  sonuçlar animasyonlu kontrol listesinde gösterilir. Kritik hata varsa devam
+  edilemez; yoksa "yedeğimi aldım" onay kutusu işaretlenmeden başlamaz.
+* **Binary/blob güvenli yedek:** `binary`, `varbinary`, `blob` ve geçersiz
+  UTF-8 alanları hex literal olarak yazılır; MySQL 8 sıkı modunda da geri yüklenir.
 * **Otomatik alan adı değiştirme**: localhost → canlı domain geçişinde eski adres
   arşivden okunur ve yeni adresle **serileştirme-güvenli** biçimde değiştirilir.
 * Yedek listesi, indirme, silme ve **doğrudan geri yükleme**.
@@ -93,6 +99,14 @@ offset sırasına göre birleştirilir; kopan yükleme kaldığı yerden devam e
 * **Tanılama / Loglar ekranı:** ortam (PHP/DB limitleri, `max_allowed_packet`,
   disk), istek süreleri, fatal/timeout, SQL hataları ve istemci 403/413/504
   olayları. Log indirme + temizleme.
+* **Ön kontrol ekranı + son uyarı modalı:** DB yazma testi, dizin probe'ları,
+  disk alanı, PHP/Zip/limit kontrolleri ve arşiv manifesti. Kritik hata varsa
+  geri yükleme başlamaz.
+* **MySQL 8 / MariaDB uyumu:** `SET SESSION sql_mode=''`, binary/blob alanları
+  hex literal; boş blob'lar `''` olarak yazılır. Eski arşivler de bu kurallarla
+  geri yüklenir.
+* **Yedek (export) düzeltmesi:** binary sütunlar artık bozulmadan yazılır;
+  üretilen `database.sql` phpMyAdmin'den de içe aktarılabilir.
 * **`wp-config.php` / `.user.ini` arşiv dışı**; eski arşivlerde de geri yazılmaz.
 * **Büyük arşivi kopyalamadan geri yükleme:** "listedeki yedeği geri yükle"
   artık 100+ MB dosyayı tek istekte kopyalamaya çalışmaz.

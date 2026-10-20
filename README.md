@@ -13,6 +13,8 @@ Bağımsız **WordPress yedekleme/geri yükleme** eklentisi. Siteyi (dosyalar + 
 - **Geri yükleme öncesi güvenlik yedeği (v1.3.0):** mevcut DB, üzerine yazılmadan önce `dbb-tmp/<iş>/pre-restore-*.sql` olarak alınır.
 - **Tanılama / Loglar (v1.3.0):** sunucu limitleri, istek süreleri, fatal/timeout, SQL hataları ve tarayıcıdaki 403/413/504 olayları panelden görüntülenir/indirilir.
 - **`wp-config.php` koruması (v1.3.0):** arşive alınmaz ve eski arşivlerden geri yazılmaz — hedef sitenin DB bilgileri ezilmez.
+- **Ön kontrol + son onay (v1.3.0):** geri yüklemeden önce DB'ye geçici tablo yazılıp silinir, dizinlere probe dosyası yazılır, disk alanı ölçülür; animasyonlu kontrol listesi ve zorunlu "yedeğimi aldım" onayı vardır.
+- **Binary/blob güvenli (v1.3.0):** `binary`/`blob` alanları hex literal olarak yazılır; MySQL 8 sıkı modunda da geri yüklenir.
 - **Sunucuya uyumlu parça boyutu:** yükleme parçaları sunucunun gerçek `upload_max_filesize` limitinden hesaplanır; reddedilen parça otomatik küçültülüp yeniden denenir (v1.1.0). Plesk/WAF için 256 KB seçilebilir.
 - **Sürükle-bırak yükleme:** "Geri Yükle" sayfasında dosyayı alana bırakın veya tıklayıp seçin (v1.1.0).
 - **Otomatik alan adı değiştirme:** localhost → canlı domain geçişinde eski adres arşivden okunur, **serileştirme-güvenli** biçimde yeni adresle değiştirilir.

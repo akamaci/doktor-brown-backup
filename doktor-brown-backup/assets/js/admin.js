@@ -74,6 +74,131 @@
 		return 'HTTP ' + code + '.';
 	}
 
+	/* ------------------------------------------------------------------ */
+	/* Pre-flight + final overwrite confirmation                          */
+	/* ------------------------------------------------------------------ */
+
+	function checkIcon( status ) {
+		switch ( status ) {
+			case 'pass': return '✔';
+			case 'warn': return '!';
+			case 'fail': return '✖';
+			default: return 'i';
+		}
+	}
+
+	function renderChecks( checks, done ) {
+		var $panel = $( '#dbb-preflight' );
+		var $list = $panel.find( '.dbb-check-list' ).empty();
+		var $summary = $panel.find( '.dbb-check-summary' ).text( DBB.i18n.preflightRunning );
+		$panel.prop( 'hidden', false ).addClass( 'is-running' );
+
+		var pass = 0, warn = 0, fail = 0, i = 0;
+		function next() {
+			if ( i >= checks.length ) {
+				$panel.removeClass( 'is-running' );
+				var cls = fail ? 'fail' : ( warn ? 'warn' : 'pass' );
+				var text = fail ? DBB.i18n.preflightFail : ( warn ? DBB.i18n.preflightWarn : DBB.i18n.preflightPass );
+				$summary.removeClass( 'pass warn fail' ).addClass( cls ).text( text + ' (' + pass + ' geçti, ' + warn + ' uyarı, ' + fail + ' hata)' );
+				if ( done ) { done(); }
+				return;
+			}
+			var c = checks[ i++ ];
+			if ( c.status === 'pass' ) { pass++; }
+			if ( c.status === 'warn' ) { warn++; }
+			if ( c.status === 'fail' ) { fail++; }
+			var $li = $( '<li>' ).addClass( 'dbb-check ' + c.status ).append(
+				$( '<span class="dbb-check-icon">' ).text( checkIcon( c.status ) ),
+				$( '<span class="dbb-check-label">' ).text( c.label ),
+				$( '<span class="dbb-check-detail">' ).text( c.detail )
+			);
+			$list.append( $li );
+			window.setTimeout( function () { $li.addClass( 'in' ); }, 20 );
+			window.setTimeout( next, 110 );
+		}
+		next();
+	}
+
+	function runPreflight( file, onDone ) {
+		var $panel = $( '#dbb-preflight' );
+		if ( ! $panel.length ) {
+			onDone( { ok: true, checks: [], summary: {} } );
+			return;
+		}
+		$panel.prop( 'hidden', false );
+		$panel.find( '.dbb-check-list' ).empty();
+		$panel.find( '.dbb-check-summary' ).text( DBB.i18n.preflightRunning );
+		post( 'dbb_preflight', { file: file || '' } )
+			.done( function ( res ) {
+				if ( ! res || ! res.success ) {
+					$panel.find( '.dbb-check-summary' ).removeClass( 'pass warn' ).addClass( 'fail' ).text( DBB.i18n.preflightFail );
+					onDone( { ok: false, checks: [], summary: { fail: 1 } } );
+					return;
+				}
+				var data = res.data || {};
+				renderChecks( data.checks || [], function () { onDone( data ); } );
+			} )
+			.fail( function ( xhr, textStatus ) {
+				var info = xhrInfo( xhr, textStatus );
+				dlog( 'error', 'preflight failed', info );
+				$panel.find( '.dbb-check-summary' ).removeClass( 'pass' ).addClass( 'fail' ).text( DBB.i18n.error + ' — ' + serverHint( info.http ) );
+				onDone( { ok: false, checks: [], summary: { fail: 1 } } );
+			} );
+	}
+
+	function showConfirm( data, onConfirm, onCancel ) {
+		var $m = $( '#dbb-confirm-modal' );
+		if ( ! $m.length ) {
+			var text = DBB.i18n.confirmOverwrite + '\n\n' + DBB.i18n.confirmRestore;
+			if ( data.ok && window.confirm( text ) ) { onConfirm(); } else if ( onCancel ) { onCancel(); }
+			return;
+		}
+		var $list = $m.find( '#dbb-confirm-list' ).empty();
+		var o = data.overwrite || {};
+		var rows = [
+			'Veritabanı: ' + ( o.tables || 0 ) + ' tablo · ' + formatBytes( o.db_size || 0 ),
+			'Dosyalar: mevcut WordPress dosyaları arşivle değiştirilecek',
+			'Eklentiler: ' + ( o.plugins || 0 ) + ' · tema: ' + ( o.theme || '—' )
+		];
+		if ( o.archive ) {
+			rows.push( 'Arşiv kaynağı: ' + ( o.archive.site_url || '—' ) + ' · ' + ( o.archive.file_count || 0 ) + ' dosya' );
+		}
+		rows.forEach( function ( r ) { $list.append( $( '<li>' ).text( r ) ); } );
+
+		( data.checks || [] ).forEach( function ( c ) {
+			if ( c.status === 'fail' || c.status === 'warn' ) {
+				$list.append( $( '<li>' ).addClass( c.status ).text( checkIcon( c.status ) + ' ' + c.label + ': ' + c.detail ) );
+			}
+		} );
+
+		var $ok = $m.find( '#dbb-confirm-start' );
+		var $chk = $m.find( '#dbb-confirm-overwrite' ).prop( 'checked', false );
+		$ok.prop( 'disabled', true );
+		if ( ! data.ok ) {
+			$ok.prop( 'disabled', true );
+			$chk.prop( 'disabled', true );
+			$list.prepend( $( '<li>' ).addClass( 'fail' ).text( DBB.i18n.preflightFail ) );
+		} else {
+			$chk.prop( 'disabled', false );
+		}
+
+		$chk.off( 'change.dbb' ).on( 'change.dbb', function () {
+			$ok.prop( 'disabled', data.ok ? ! this.checked : true );
+		} );
+		$ok.off( 'click.dbb' ).on( 'click.dbb', function () {
+			if ( data.ok && $chk.is( ':checked' ) ) {
+				$m.prop( 'hidden', true );
+				onConfirm();
+			}
+		} );
+		$m.find( '#dbb-confirm-cancel' ).off( 'click.dbb' ).on( 'click.dbb', function () {
+			$m.prop( 'hidden', true );
+			if ( onCancel ) { onCancel(); }
+		} );
+
+		$m.prop( 'hidden', false );
+	}
+
 	function setProgress( $box, percent, message ) {
 		$box.prop( 'hidden', false ).css( 'display', 'block' );
 		$box.find( '.dbb-bar > span' ).css( 'width', Math.max( 0, Math.min( 100, percent ) ) + '%' );
@@ -265,6 +390,10 @@
 		} );
 	}
 
+	$( '#dbb-preflight-run' ).on( 'click', function () {
+		runPreflight( '', function () {} );
+	} );
+
 	$( '#dbb-import-start' ).on( 'click', function () {
 		var $btn = $( this );
 		var $box = $( '#dbb-import-progress' );
@@ -291,13 +420,22 @@
 		var target = $( '#dbb-target' ).val() || '';
 		var auto = autoDomain();
 		$btn.prop( 'disabled', true );
-		setProgress( $box, 1, DBB.i18n.starting );
 
-		/* v1.2.0 — "kaldığı yerden devam": önce sunucuda yarım kalmış bir
-		   yükleme var mı bakarız; varsa kullanıcıya sorarız. Onaylarsa
-		   aynı job + `bytes` (sunucudaki gerçek bayt) ile devam ederiz;
-		   hayır derse `dbb_import_start` ile temiz başlarız. */
-		resumeStart( target, auto, $box, $btn );
+		/* Önce ortamı ölç (DB yazma, dizin izinleri, disk), sonra son uyarı. */
+		runPreflight( '', function ( res ) {
+			showConfirm(
+				res,
+				function () {
+					setProgress( $box, 1, DBB.i18n.starting );
+					// v1.2.0 — "kaldığı yerden devam": önce sunucuda yarım
+					// kalmış bir yükleme var mı bakarız; varsa kullanıcıya sorarız.
+					resumeStart( target, auto, $box, $btn );
+				},
+				function () {
+					$btn.prop( 'disabled', false );
+				}
+			);
+		} );
 
 		function resumeStart( t, a, $bx, $bn ) {
 			post( 'dbb_import_resume' )
@@ -441,24 +579,34 @@
 
 	$( document ).on( 'click', '.dbb-restore', function () {
 		var file = $( this ).data( 'file' );
-		if ( ! window.confirm( DBB.i18n.confirmRestore ) ) {
-			return;
-		}
-		$( this ).prop( 'disabled', true );
-		var $box = overlay();
-		setProgress( $box, 1, DBB.i18n.starting );
+		var $button = $( this );
+		$button.prop( 'disabled', true );
 
-		post( 'dbb_restore_backup', { file: file, auto_domain: 1 } )
-			.done( function ( res ) {
-				if ( ! res || ! res.success ) {
-					setProgress( $box, 0, ( res && res.data && res.data.message ) || DBB.i18n.error );
-					return;
+		runPreflight( file, function ( res ) {
+			showConfirm(
+				res,
+				function () {
+					var $box = overlay();
+					setProgress( $box, 1, DBB.i18n.starting );
+					post( 'dbb_restore_backup', { file: file, auto_domain: 1 } )
+						.done( function ( r ) {
+							if ( ! r || ! r.success ) {
+								setProgress( $box, 0, ( r && r.data && r.data.message ) || DBB.i18n.error );
+								$button.prop( 'disabled', false );
+								return;
+							}
+							processJob( r.data.job, '', true, $box, null );
+						} )
+						.fail( function () {
+							setProgress( $box, 0, DBB.i18n.error );
+							$button.prop( 'disabled', false );
+						} );
+				},
+				function () {
+					$button.prop( 'disabled', false );
 				}
-				processJob( res.data.job, '', true, $box, null );
-			} )
-			.fail( function () {
-				setProgress( $box, 0, DBB.i18n.error );
-			} );
+			);
+		} );
 	} );
 
 	/* ------------------------------------------------------------------ */

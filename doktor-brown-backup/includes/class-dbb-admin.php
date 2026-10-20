@@ -130,6 +130,11 @@ class DBB_Admin {
 					'retry'      => __( 'tekrar deneniyor', 'doktor-brown-backup' ),
 					'giveUp'     => __( 'Sunucu isteği sürekli reddetti. Tanılama / Loglar sayfasındaki kaydı paylaşın.', 'doktor-brown-backup' ),
 					'seeLogs'    => __( 'Ayrıntılar: Tanılama / Loglar', 'doktor-brown-backup' ),
+					'preflightRunning' => __( 'Ortam ölçülüyor…', 'doktor-brown-backup' ),
+					'preflightPass'    => __( 'Tüm kontroller geçti.', 'doktor-brown-backup' ),
+					'preflightFail'    => __( 'Kritik sorun var — devam edilemez.', 'doktor-brown-backup' ),
+					'preflightWarn'    => __( 'Uyarı var — gözden geçirin.', 'doktor-brown-backup' ),
+					'confirmOverwrite' => __( 'Mevcut sitenin veritabanı ve dosyaları değiştirilecek.', 'doktor-brown-backup' ),
 				),
 			)
 		);
@@ -266,7 +271,34 @@ class DBB_Admin {
 				</tr>
 			</table>
 
+			<p>
+				<button type="button" class="button" id="dbb-preflight-run"><?php esc_html_e( 'Ön Kontrolü Çalıştır', 'doktor-brown-backup' ); ?></button>
+				<span class="description"><?php esc_html_e( 'Veritabanına yazma, dizin izinleri ve disk alanı ölçülür.', 'doktor-brown-backup' ); ?></span>
+			</p>
+
+			<div id="dbb-preflight" class="dbb-preflight" hidden>
+				<h3><?php esc_html_e( 'Ortam Ön Kontrolü', 'doktor-brown-backup' ); ?></h3>
+				<ul class="dbb-check-list"></ul>
+				<p class="dbb-check-summary"></p>
+			</div>
+
 			<p><button type="button" class="button button-primary button-hero" id="dbb-import-start"><?php esc_html_e( 'Geri Yüklemeyi Başlat', 'doktor-brown-backup' ); ?></button></p>
+
+			<div id="dbb-confirm-modal" class="dbb-modal" hidden>
+				<div class="dbb-modal-box">
+					<h2><?php esc_html_e( 'Son uyarı — site üzerine yazılacak', 'doktor-brown-backup' ); ?></h2>
+					<p><?php esc_html_e( 'Aşağıdaki verilerin üzerine yazılacak. Bu işlem geri alınamaz.', 'doktor-brown-backup' ); ?></p>
+					<ul id="dbb-confirm-list" class="dbb-confirm-list"></ul>
+					<label class="dbb-confirm-check">
+						<input type="checkbox" id="dbb-confirm-overwrite" />
+						<?php esc_html_e( 'Mevcut sitemin yedeğini aldım; verilerin kaybolabileceğini anladım.', 'doktor-brown-backup' ); ?>
+					</label>
+					<p class="dbb-modal-actions">
+						<button type="button" class="button" id="dbb-confirm-cancel"><?php esc_html_e( 'Vazgeç', 'doktor-brown-backup' ); ?></button>
+						<button type="button" class="button button-primary" id="dbb-confirm-start" disabled><?php esc_html_e( 'Evet, geri yükle', 'doktor-brown-backup' ); ?></button>
+					</p>
+				</div>
+			</div>
 
 			<div id="dbb-import-progress" class="dbb-progress" hidden>
 				<div class="dbb-bar"><span></span></div>
@@ -490,6 +522,18 @@ class DBB_Admin {
 		DBB_Logger::client( $payload );
 
 		wp_send_json_success( array( 'logged' => true ) );
+	}
+
+	/**
+	 * AJAX: run restore pre-flight checks.
+	 *
+	 * @return void
+	 */
+	public static function ajax_preflight() {
+		DBB_Plugin::verify_request();
+		$file = isset( $_POST['file'] ) ? sanitize_file_name( wp_unslash( $_POST['file'] ) ) : '';
+		$res  = DBB_Preflight::run( $file );
+		wp_send_json_success( $res );
 	}
 
 	/**

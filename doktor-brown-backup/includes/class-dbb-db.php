@@ -37,7 +37,7 @@ class DBB_DB {
 	 */
 	public static function dump_all( $fp ) {
 		$count = 0;
-		fwrite( $fp, "SET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS=0;\n\n" ); // phpcs:ignore
+		fwrite( $fp, "SET NAMES utf8mb4;\nSET SESSION sql_mode='';\nSET FOREIGN_KEY_CHECKS=0;\n\n" ); // phpcs:ignore
 		foreach ( self::tables() as $table ) {
 			self::dump_table( $table, $fp );
 			$count++;
@@ -66,8 +66,10 @@ class DBB_DB {
 
 		$columns  = $wpdb->get_results( 'SHOW COLUMNS FROM `' . $safe . '`', ARRAY_A );
 		$colnames = array();
-		foreach ( (array) $columns as $col ) {
+		$binary   = array();
+		foreach ( (array) $columns as $i => $col ) {
 			$colnames[] = '`' . $col['Field'] . '`';
+			$binary[ $i ] = (bool) preg_match( '/^(binary|varbinary|tinyblob|blob|mediumblob|longblob|bit)\b/i', (string) $col['Type'] );
 		}
 		if ( empty( $colnames ) ) {
 			return;
@@ -90,8 +92,17 @@ class DBB_DB {
 			$values = array();
 			foreach ( $rows as $row ) {
 				$vals = array();
-				foreach ( $row as $value ) {
-					$vals[] = ( null === $value ) ? 'NULL' : "'" . esc_sql( $value ) . "'";
+				foreach ( $row as $i => $value ) {
+					if ( null === $value ) {
+						$vals[] = 'NULL';
+					} elseif ( ! empty( $binary[ $i ] ) || ( function_exists( 'mb_check_encoding' ) && ! mb_check_encoding( (string) $value, 'UTF-8' ) ) ) {
+						// Binary/blob/invalid-UTF-8 data: hex literal is safe for
+						// both utf8mb4 and latin1 target connections.
+						$hex    = bin2hex( (string) $value );
+						$vals[] = ( '' === $hex ) ? "''" : '0x' . $hex;
+					} else {
+						$vals[] = "'" . esc_sql( $value ) . "'";
+					}
 				}
 				$values[] = '(' . implode( ', ', $vals ) . ')';
 			}
@@ -197,6 +208,14 @@ class DBB_DB {
 		$error       = '';
 		$error_stmt  = '';
 		$interrupted = false;
+
+		/* MySQL 8 / Plesk strict mode rejects legacy zero dates and some
+		   table definitions produced by older MariaDB servers. Clear the
+		   session SQL mode before restoring; old archives (which do not
+		   contain this SET) are covered too. */
+		$wpdb->query( "SET SESSION sql_mode=''" ); // phpcs:ignore
+		$wpdb->query( 'SET SESSION foreign_key_checks=0' ); // phpcs:ignore
+		$wpdb->last_error = '';
 
 		while ( true ) {
 			// Pull the next complete statement out of the buffer.

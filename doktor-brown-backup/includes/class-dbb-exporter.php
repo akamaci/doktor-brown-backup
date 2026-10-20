@@ -161,7 +161,7 @@ class DBB_Exporter {
 		}
 
 		if ( $first ) {
-			fwrite( $handle, "SET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS=0;\n\n" ); // phpcs:ignore
+			fwrite( $handle, "SET NAMES utf8mb4;\nSET SESSION sql_mode='';\nSET FOREIGN_KEY_CHECKS=0;\n\n" ); // phpcs:ignore
 		}
 
 		$tables = $state['db_tables'];

@@ -115,3 +115,114 @@
 	font-weight: 600;
 	color: #1d2327;
 }
+
+/* v1.3.0 — ön kontrol listesi */
+.dbb-preflight {
+	margin: 18px 0;
+	padding: 16px 18px;
+	background: #fff;
+	border: 1px solid #dcdcde;
+	border-left: 4px solid #2271b1;
+	border-radius: 6px;
+	max-width: 680px;
+}
+.dbb-preflight h3 {
+	margin: 0 0 10px;
+	font-size: 14px;
+}
+.dbb-check-list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.dbb-check {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	padding: 5px 0;
+	opacity: 0;
+	transform: translateY(4px);
+	transition: opacity 0.2s ease, transform 0.2s ease;
+	border-bottom: 1px solid #f0f0f1;
+}
+.dbb-check.in {
+	opacity: 1;
+	transform: none;
+}
+.dbb-check-icon {
+	flex: 0 0 18px;
+	width: 18px;
+	height: 18px;
+	line-height: 18px;
+	text-align: center;
+	border-radius: 50%;
+	font-size: 11px;
+	font-weight: 700;
+	color: #fff;
+	margin-top: 1px;
+}
+.dbb-check.pass .dbb-check-icon { background: #00a32a; }
+.dbb-check.warn .dbb-check-icon { background: #dba617; }
+.dbb-check.fail .dbb-check-icon { background: #d63638; }
+.dbb-check.info .dbb-check-icon { background: #72aee6; }
+.dbb-check-label {
+	flex: 0 0 210px;
+	font-weight: 600;
+}
+.dbb-check-detail {
+	color: #50575e;
+	word-break: break-word;
+}
+.dbb-check.fail .dbb-check-detail { color: #b32d2e; font-weight: 600; }
+.dbb-check-summary {
+	margin: 10px 0 0;
+	font-weight: 700;
+}
+.dbb-check-summary.pass { color: #007017; }
+.dbb-check-summary.warn { color: #996800; }
+.dbb-check-summary.fail { color: #b32d2e; }
+
+/* Son uyarı modalı */
+.dbb-modal {
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.55);
+	z-index: 100001;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+.dbb-modal-box {
+	background: #fff;
+	border-radius: 10px;
+	padding: 24px 28px;
+	width: 620px;
+	max-width: 92vw;
+	max-height: 86vh;
+	overflow: auto;
+	box-shadow: 0 14px 46px rgba(0, 0, 0, 0.35);
+}
+.dbb-modal-box h2 {
+	margin: 0 0 10px;
+	color: #b32d2e;
+}
+.dbb-confirm-list {
+	margin: 12px 0 16px;
+	padding-left: 20px;
+}
+.dbb-confirm-list li { margin: 4px 0; }
+.dbb-confirm-list li.fail { color: #b32d2e; font-weight: 600; }
+.dbb-confirm-list li.warn { color: #996800; }
+.dbb-confirm-check {
+	display: block;
+	padding: 12px;
+	background: #fcf9e8;
+	border: 1px solid #f0c33c;
+	border-radius: 6px;
+	font-weight: 600;
+}
+.dbb-modal-actions {
+	margin: 18px 0 0;
+	text-align: right;
+}
+.dbb-modal-actions .button { margin-left: 8px; }

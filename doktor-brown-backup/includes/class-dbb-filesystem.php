@@ -79,6 +79,14 @@ class DBB_Filesystem {
 				continue;
 			}
 		}
+
+		/* Third-party backup folders live under wp-content and often contain
+		   multi-GB archives. Exclude any "wp-content/*-backups/" tree without
+		   hardcoding a vendor name. */
+		if ( preg_match( '#^wp-content/[^/]+-backups(/|$)#', $relative ) ) {
+			return true;
+		}
+
 		return false;
 	}
 

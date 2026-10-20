@@ -1018,6 +1018,8 @@ class DBB_Importer {
 			case 'files':
 				$total = max( 1, count( $state['files'] ) );
 				return (int) round( 60 + 38 * ( $state['index'] / $total ) );
+			case 'finalize':
+				return 99;
 			case 'done':
 				return 100;
 			default:
