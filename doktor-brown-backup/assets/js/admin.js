@@ -119,7 +119,7 @@
 		next();
 	}
 
-	function runPreflight( file, onDone ) {
+	function runPreflight( file, onDone, size ) {
 		var $panel = $( '#dbb-preflight' );
 		if ( ! $panel.length ) {
 			onDone( { ok: true, checks: [], summary: {} } );
@@ -128,7 +128,7 @@
 		$panel.prop( 'hidden', false );
 		$panel.find( '.dbb-check-list' ).empty();
 		$panel.find( '.dbb-check-summary' ).text( DBB.i18n.preflightRunning );
-		post( 'dbb_preflight', { file: file || '' } )
+		post( 'dbb_preflight', { file: file || '', size: size || 0 } )
 			.done( function ( res ) {
 				if ( ! res || ! res.success ) {
 					$panel.find( '.dbb-check-summary' ).removeClass( 'pass warn' ).addClass( 'fail' ).text( DBB.i18n.preflightFail );
@@ -391,7 +391,8 @@
 	}
 
 	$( '#dbb-preflight-run' ).on( 'click', function () {
-		runPreflight( '', function () {} );
+		var f = $fileInput.data( 'dropped' ) || ( $fileInput[ 0 ] && $fileInput[ 0 ].files && $fileInput[ 0 ].files[ 0 ] ) || null;
+		runPreflight( '', function () {}, f ? f.size : 0 );
 	} );
 
 	$( '#dbb-import-start' ).on( 'click', function () {
@@ -435,7 +436,7 @@
 					$btn.prop( 'disabled', false );
 				}
 			);
-		} );
+		}, file.size );
 
 		function resumeStart( t, a, $bx, $bn ) {
 			post( 'dbb_import_resume' )

@@ -20,9 +20,10 @@ class DBB_Preflight {
 	 * Run all checks.
 	 *
 	 * @param string $file Optional stored backup filename (inside dbb-backups).
+	 * @param int    $upload_size Optional size of a file that will be uploaded.
 	 * @return array
 	 */
-	public static function run( $file = '' ) {
+	public static function run( $file = '', $upload_size = 0 ) {
 		global $wpdb;
 
 		$checks = array();
@@ -145,7 +146,7 @@ class DBB_Preflight {
 		}
 
 		// Archive + free space.
-		$archive_size = 0;
+		$archive_size = max( 0, (int) $upload_size );
 		$archive      = null;
 		if ( '' !== $file ) {
 			$path = DBB_BACKUPS_DIR . '/' . sanitize_file_name( $file );
@@ -192,18 +193,44 @@ class DBB_Preflight {
 			}
 		}
 
-		$free = @disk_free_space( ABSPATH ); // phpcs:ignore
+		$free = @disk_free_space( DBB_TMP_DIR ); // phpcs:ignore
 		$need = (int) ( $archive_size * 1.1 + $db_size + 100 * 1024 * 1024 );
-		$add(
-			'disk_free',
-			__( 'Boş disk alanı', 'doktor-brown-backup' ),
-			( false !== $free && $free >= $need ) ? 'pass' : ( false === $free ? 'warn' : 'fail' ),
-			sprintf(
+		if ( false === $free ) {
+			$disk_status = 'warn';
+			$disk_detail = __( 'Boş alan okunamadı — yükleme sırasında disk kontrolü yapılacak.', 'doktor-brown-backup' );
+		} elseif ( $free < $need ) {
+			$disk_status = 'fail';
+			$disk_detail = sprintf(
+				/* translators: 1: free, 2: needed, 3: archive */
+				__( 'Disk alanı yetersiz — boş: %1$s, gerekli: %2$s (yedek: %3$s + DB + çıkarma payı).', 'doktor-brown-backup' ),
+				size_format( $free ),
+				size_format( $need ),
+				size_format( $archive_size )
+			);
+		} else {
+			$disk_status = 'pass';
+			$disk_detail = sprintf(
 				/* translators: 1: free, 2: needed */
-				__( 'Boş: %1$s · Gerekli (yaklaşık): %2$s', 'doktor-brown-backup' ),
-				false === $free ? '?' : size_format( $free ),
+				__( 'Yeterli — boş: %1$s, gerekli (yaklaşık): %2$s', 'doktor-brown-backup' ),
+				size_format( $free ),
 				size_format( $need )
-			)
+			);
+		}
+		$add( 'disk_free', __( 'Disk alanı', 'doktor-brown-backup' ), $disk_status, $disk_detail );
+
+		// PHP uploads land in upload_tmp_dir first; a 5 MB chunk must fit there.
+		$tmp_free = @disk_free_space( sys_get_temp_dir() ); // phpcs:ignore
+		$add(
+			'upload_tmp',
+			__( 'Yükleme geçici dizini', 'doktor-brown-backup' ),
+			( false === $tmp_free || $tmp_free > 64 * 1024 * 1024 ) ? 'pass' : 'fail',
+			false === $tmp_free
+				? __( 'Boyut okunamadı.', 'doktor-brown-backup' )
+				: sprintf(
+					/* translators: %s: free space */
+					__( 'Boş: %s (en az 64 MB gerekir)', 'doktor-brown-backup' ),
+					size_format( $tmp_free )
+				)
 		);
 
 		// Target state summary.

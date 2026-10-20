@@ -74,6 +74,12 @@ Bu mesaj tarayıcının isteği 413/403/500/504 veya ağ hatasıyla düştüğü
 boyutu 5 MB ile sınırlıdır; 413/403 gelirse otomatik yarıya iner ve aynı parça
 30 kez denenir. Yine takılırsa "Geri Yükle" ekranından parça boyutunu **256 KB** yapın.
 
+= Disk alanı yetersizse ne olur? =
+Ön kontrol, arşiv boyutu + veritabanı + çıkarma payını hesaplar ve
+**“Disk alanı yetersiz — boş: X, gerekli: Y”** diyerek geri yüklemeyi başlatmaz.
+Yükleme sırasında disk dolarsa sunucu **507** ile durur ve loga yazar; yarım
+arşiv kaldığı yerden devam ettirilebilir.
+
 = 10 GB yükleme gerçekten mümkün mü? =
 Evet, sunucunun disk alanı yettiği sürece. Dosya hiçbir zaman tek parça hâlinde
 gönderilmez; 5 MB'lık parçalar hâlinde gönderilip sunucuda birleştirilir. Bu yüzden

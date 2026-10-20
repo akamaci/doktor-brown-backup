@@ -351,6 +351,12 @@ check(
 			&& false !== strpos( $pref, 'CREATE TABLE' )
 );
 check(
+	'preflight: disk yetersizliğini açıkça söylüyor',
+	false !== strpos( $pref, 'Disk alanı yetersiz' )
+			&& false !== strpos( $pref, 'disk_free_space' )
+			&& false !== strpos( $pref, '$upload_size' )
+);
+check(
 	'preflight: AJAX + arayüz + son onay kutusu',
 	false !== strpos( $pluginf, "'dbb_preflight'" )
 			&& false !== strpos( $admin, 'id="dbb-preflight"' )

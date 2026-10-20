@@ -532,7 +532,8 @@ class DBB_Admin {
 	public static function ajax_preflight() {
 		DBB_Plugin::verify_request();
 		$file = isset( $_POST['file'] ) ? sanitize_file_name( wp_unslash( $_POST['file'] ) ) : '';
-		$res  = DBB_Preflight::run( $file );
+		$size = isset( $_POST['size'] ) ? (int) $_POST['size'] : 0;
+		$res  = DBB_Preflight::run( $file, $size );
 		wp_send_json_success( $res );
 	}
 

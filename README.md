@@ -50,6 +50,7 @@ Eski sürüm sabit 2 MB parça kullanıyordu; `upload_max_filesize` sınırlı s
 - `database.sql` **parçalı** yüklenir; her istek kendi offset'ini kaydeder. PHP timeout olsa bile kaldığı yerden devam eder.
 - Geri yükleme öncesi **mevcut DB'nin SQL yedeği** alınır (kapatmak için `dbb_safety_backup` filtresi).
 - Hata ve limitler: **Dr. Brown Backup → Tanılama / Loglar**.
+- **Disk alanı yetersizse:** ön kontrol “Disk alanı yetersiz — boş: X, gerekli: Y” der ve geri yükleme başlamaz. Yükleme sırasında disk dolarsa 507 ile durur; yarım arşiv kaldığı yerden devam eder.
 
 ## Dosya yapısı
 
