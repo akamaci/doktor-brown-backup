@@ -2,7 +2,7 @@
 /**
  * Reader for ".wpress" archives.
  *
- * Block format (4377-byte header per entry), per ServMask Ai1wm_Archiver:
+ * Block format (4377-byte header per entry), .wpress archive specification:
  *   name    offset    0  length 255   filename (no path)
  *   size    offset  255  length  14   size of file contents
  *   mtime   offset  269  length  12   last modification time

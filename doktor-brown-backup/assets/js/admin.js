@@ -6,6 +6,74 @@
 		return $.post( DBB.ajaxUrl, $.extend( { action: action, nonce: DBB.nonce }, data || {} ) );
 	}
 
+	/* ------------------------------------------------------------------ */
+	/* Client diagnostics                                                  */
+	/* ------------------------------------------------------------------ */
+	/* Requests blocked by a proxy/WAF (403/413) or killed by a PHP timeout
+	   never reach the plugin, so the browser reports them to the server log. */
+	var logQueue = [];
+	var logTimer = null;
+
+	function dlog( level, message, ctx ) {
+		var entry = {
+			level: level,
+			message: message,
+			url: window.location.href,
+			ua: navigator.userAgent,
+			time: new Date().toISOString()
+		};
+		if ( ctx ) {
+			$.extend( entry, ctx );
+		}
+		if ( window.console && console[ level === 'error' ? 'error' : 'log' ] ) {
+			console[ level === 'error' ? 'error' : 'log' ]( '[DBB]', message, ctx || '' );
+		}
+		logQueue.push( entry );
+		if ( logQueue.length > 100 ) {
+			logQueue = logQueue.slice( -100 );
+		}
+		if ( ! logTimer ) {
+			logTimer = window.setTimeout( flushLogs, 1500 );
+		}
+	}
+
+	function flushLogs() {
+		logTimer = null;
+		if ( ! logQueue.length ) { return; }
+		var batch = logQueue.splice( 0, 20 );
+		post( 'dbb_log_client', { payload: JSON.stringify( { events: batch } ) } )
+			.fail( function () { /* never recurse into logging */ } );
+		if ( logQueue.length ) {
+			logTimer = window.setTimeout( flushLogs, 1500 );
+		}
+	}
+
+	function xhrInfo( xhr, textStatus ) {
+		var body = '';
+		try { body = ( xhr && xhr.responseText ) ? xhr.responseText.substring( 0, 400 ) : ''; } catch ( e ) {}
+		return {
+			http: xhr ? xhr.status : 0,
+			textStatus: textStatus || '',
+			response: body
+		};
+	}
+
+	function serverHint( code ) {
+		if ( code === 403 ) {
+			return 'HTTP 403 — güvenlik duvarı/WAF isteği engelledi.';
+		}
+		if ( code === 413 ) {
+			return 'HTTP 413 — istek gövdesi sunucu sınırını aştı.';
+		}
+		if ( code === 500 || code === 502 || code === 503 || code === 504 ) {
+			return 'HTTP ' + code + ' — PHP/sunucu isteği yarıda kesti (zaman aşımı veya DB hatası).';
+		}
+		if ( ! code ) {
+			return 'Ağ hatası — yanıt alınamadı (bağlantı koptu veya istek zaman aşımına uğradı).';
+		}
+		return 'HTTP ' + code + '.';
+	}
+
 	function setProgress( $box, percent, message ) {
 		$box.prop( 'hidden', false ).css( 'display', 'block' );
 		$box.find( '.dbb-bar > span' ).css( 'width', Math.max( 0, Math.min( 100, percent ) ) + '%' );
@@ -34,11 +102,14 @@
 	/* Job processor (shared by upload + restore-from-backup)              */
 	/* ------------------------------------------------------------------ */
 
-	function processJob( job, target, auto, $box, $btn ) {
+	function processJob( job, target, auto, $box, $btn, attempt ) {
+		attempt = attempt || 0;
 		post( 'dbb_import_step', { job: job, target_url: target, auto_domain: auto ? 1 : 0 } )
 			.done( function ( res ) {
 				if ( ! res || ! res.success ) {
-					setProgress( $box, 0, ( res && res.data && res.data.message ) || DBB.i18n.error );
+					var msg = ( res && res.data && res.data.message ) || DBB.i18n.error;
+					dlog( 'error', 'import step rejected', { job: job, message: msg } );
+					setProgress( $box, 0, msg + ' — ' + DBB.i18n.seeLogs );
 					if ( $btn ) { $btn.prop( 'disabled', false ); }
 					return;
 				}
@@ -56,11 +127,21 @@
 					if ( $btn ) { $btn.prop( 'disabled', false ); }
 					return;
 				}
-				processJob( job, target, auto, $box, $btn );
+				processJob( job, target, auto, $box, $btn, 0 );
 			} )
-			.fail( function () {
-				setProgress( $box, 0, DBB.i18n.error + ' — tekrar deneniyor…' );
-				processJob( job, target, auto, $box, $btn );
+			.fail( function ( xhr, textStatus ) {
+				var info = xhrInfo( xhr, textStatus );
+				dlog( 'error', 'import step request failed', $.extend( { job: job, attempt: attempt }, info ) );
+				if ( attempt < 5 ) {
+					var wait = Math.min( 15000, 1000 * Math.pow( 2, attempt ) );
+					setProgress( $box, 0, DBB.i18n.error + ' — ' + DBB.i18n.retry + ' (' + serverHint( info.http ) + ') ' + Math.round( wait / 1000 ) + ' sn' );
+					window.setTimeout( function () {
+						processJob( job, target, auto, $box, $btn, attempt + 1 );
+					}, wait );
+					return;
+				}
+				setProgress( $box, 0, DBB.i18n.error + ' — ' + serverHint( info.http ) + ' ' + DBB.i18n.giveUp );
+				if ( $btn ) { $btn.prop( 'disabled', false ); }
 			} );
 	}
 
@@ -89,11 +170,14 @@
 				$btn.prop( 'disabled', false );
 			} );
 
-		function exportStep( job ) {
+		function exportStep( job, attempt ) {
+			attempt = attempt || 0;
 			post( 'dbb_export_step', { job: job } )
 				.done( function ( res ) {
 					if ( ! res || ! res.success ) {
-						setProgress( $box, 0, ( res && res.data && res.data.message ) || DBB.i18n.error );
+						var msg = ( res && res.data && res.data.message ) || DBB.i18n.error;
+						dlog( 'error', 'export step rejected', { job: job, message: msg } );
+						setProgress( $box, 0, msg + ' — ' + DBB.i18n.seeLogs );
 						$btn.prop( 'disabled', false );
 						return;
 					}
@@ -108,11 +192,19 @@
 						$btn.prop( 'disabled', false );
 						return;
 					}
-					exportStep( job );
+					exportStep( job, 0 );
 				} )
-				.fail( function () {
-					setProgress( $box, 0, DBB.i18n.error + ' — tekrar deneniyor…' );
-					exportStep( job );
+				.fail( function ( xhr, textStatus ) {
+					var info = xhrInfo( xhr, textStatus );
+					dlog( 'error', 'export step request failed', $.extend( { job: job, attempt: attempt }, info ) );
+					if ( attempt < 5 ) {
+						var wait = Math.min( 15000, 1000 * Math.pow( 2, attempt ) );
+						setProgress( $box, 0, DBB.i18n.error + ' — ' + DBB.i18n.retry + ' (' + serverHint( info.http ) + ')' );
+						window.setTimeout( function () { exportStep( job, attempt + 1 ); }, wait );
+						return;
+					}
+					setProgress( $box, 0, DBB.i18n.error + ' — ' + serverHint( info.http ) + ' ' + DBB.i18n.giveUp );
+					$btn.prop( 'disabled', false );
 				} );
 		}
 	} );
@@ -192,6 +284,10 @@
 			window.alert( DBB.i18n.badExt );
 			return;
 		}
+		if ( file.size > 10 * 1024 * 1024 * 1024 ) {
+			window.alert( 'Dosya 10 GB sınırını aşıyor.' );
+			return;
+		}
 		var target = $( '#dbb-target' ).val() || '';
 		var auto = autoDomain();
 		$btn.prop( 'disabled', true );
@@ -257,11 +353,16 @@
 		      denenir (min 256KB) — sabit 2MB'ın sunucu limitini aştığı
 		      servislerde ilerleme donup kalmıyor. */
 		function initialChunkSize() {
-			var limit = DBB.uploadLimit || DBB.chunkSize || ( 2 * 1024 * 1024 );
+			var sel = parseInt( $( '#dbb-chunk-size' ).val(), 10 );
+			if ( sel > 0 ) {
+				return sel;
+			}
+			var limit = Math.min( DBB.uploadLimit || DBB.chunkSize || ( 2 * 1024 * 1024 ), DBB.maxChunk || ( 5 * 1024 * 1024 ) );
 			return Math.floor( ( DBB.chunkSize || limit ) * 0.7 );
 		}
 
-		function upload( job, offset, chunk ) {
+		function upload( job, offset, chunk, attempt ) {
+			attempt = attempt || 0;
 			if ( offset >= file.size ) {
 				setProgress( $box, 40, DBB.i18n.importing );
 				processJob( job, target, auto, $box, $btn );
@@ -276,15 +377,17 @@
 			fd.append( 'offset', offset );
 			fd.append( 'chunk', slice, 'chunk.bin' );
 
-			$.ajax( { url: DBB.ajaxUrl, type: 'POST', data: fd, processData: false, contentType: false } )
+			$.ajax( { url: DBB.ajaxUrl, type: 'POST', data: fd, processData: false, contentType: false, timeout: 180000 } )
 				.done( function ( res ) {
 					if ( ! res || ! res.success ) {
 						// Sunucu parçayı reddetti → daha küçük parçayla yeniden dene.
+						var msg = ( res && res.data && res.data.message ) || DBB.i18n.error;
+						dlog( 'error', 'upload chunk rejected', { job: job, offset: offset, chunk: chunk, attempt: attempt, message: msg } );
 						if ( chunk > 256 * 1024 ) {
 							setProgress( $box, Math.max( 1, ( 3 + Math.round( 35 * ( offset / file.size ) ) ) ), DBB.i18n.uploading + ' — parça küçültülüyor…' );
-							upload( job, offset, Math.floor( chunk / 2 ) );
+							upload( job, offset, Math.floor( chunk / 2 ), 0 );
 						} else {
-							setProgress( $box, 0, ( res && res.data && res.data.message ) || DBB.i18n.error );
+							setProgress( $box, 0, msg + ' — ' + DBB.i18n.seeLogs );
 							$btn.prop( 'disabled', false );
 						}
 						return;
@@ -294,17 +397,40 @@
 					var received = res.data && typeof res.data.received === 'number' ? res.data.received : ( offset + slice.size );
 					var pct = 3 + Math.round( 35 * ( received / file.size ) );
 					setProgress( $box, pct, DBB.i18n.uploading + ' ' + pct + '%' );
-					upload( job, received, chunk );
+					upload( job, received, chunk, 0 );
 				} )
-				.fail( function () {
-					// Ağ hatası / sunucu yanıt yok → küçültüp tekrar dene.
-					if ( chunk > 256 * 1024 ) {
-						setProgress( $box, Math.max( 1, ( 3 + Math.round( 35 * ( offset / file.size ) ) ) ), DBB.i18n.error + ' — tekrar deneniyor…' );
-						upload( job, offset, Math.floor( chunk / 2 ) );
-					} else {
-						setProgress( $box, 0, DBB.i18n.error + ' — bağlantı kurulamadı.' );
-						$btn.prop( 'disabled', false );
+				.fail( function ( xhr, textStatus ) {
+					// Ağ hatası / WAF / sunucu yanıtı yok.
+					var info = xhrInfo( xhr, textStatus );
+					dlog( 'error', 'upload chunk failed', $.extend( { job: job, offset: offset, chunk: chunk, attempt: attempt }, info ) );
+
+					var minChunk = 256 * 1024;
+					var sizeRejected = info.http === 413 || info.http === 403 || info.http === 400 ||
+						/too large|sınır|limit|boyut/i.test( info.response || '' );
+
+					/* Doktor Brown yükleme protokolü: 413/403'te parçayı yarıya
+					   indir; diğer hatalarda aynı parçayı 30 kez, artan
+					   beklemeyle tekrar dene. Her hatada küçültmek yavaş
+					   bağlantıda ilerlemeyi durduruyordu. */
+					if ( sizeRejected && chunk > minChunk ) {
+						setProgress( $box, Math.max( 1, ( 3 + Math.round( 35 * ( offset / file.size ) ) ) ), DBB.i18n.uploading + ' — parça küçültülüyor…' );
+						window.setTimeout( function () {
+							upload( job, offset, Math.max( minChunk, Math.floor( chunk / 2 ) ), 0 );
+						}, 300 );
+						return;
 					}
+
+					if ( attempt < 30 ) {
+						var wait = Math.min( 30000, ( attempt + 1 ) * 1000 );
+						setProgress( $box, Math.max( 1, ( 3 + Math.round( 35 * ( offset / file.size ) ) ) ), DBB.i18n.error + ' — ' + DBB.i18n.retry + ' (' + serverHint( info.http ) + ') ' + Math.round( wait / 1000 ) + ' sn' );
+						window.setTimeout( function () {
+							upload( job, offset, chunk, attempt + 1 );
+						}, wait );
+						return;
+					}
+
+					setProgress( $box, 0, DBB.i18n.error + ' — ' + serverHint( info.http ) + ' ' + DBB.i18n.giveUp );
+					$btn.prop( 'disabled', false );
 				} );
 		}
 	} );

@@ -7,7 +7,13 @@ Bağımsız **WordPress yedekleme/geri yükleme** eklentisi. Siteyi (dosyalar + 
 - **Yedekleme (export):** tüm WordPress dosyaları + veritabanı → tek `.dbb` (ZIP tabanlı) arşiv.
 - **Geri yükleme (import):** `.dbb` ve `.wpress` arşivlerini yükleyip geri yükler.
 - **Parçalı (chunked) çalışma:** büyük sitelerde `max_execution_time` / `memory_limit` sorunu yaşatmaz.
-- **Sunucuya uyumlu parça boyutu:** yükleme parçaları sunucunun gerçek `upload_max_filesize` limitinden hesaplanır; reddedilen parça otomatik küçültülüp yeniden denenir (v1.1.0).
+- **10 GB'a kadar yükleme (v1.3.0):** parça boyutu **5 MB tavanlı**; 413/403'te yarıya iner, ağ hatasında aynı parça **30 kez** artan beklemeyle denenir. Yükleme protokolü Doktor Brown Backup için özgün geliştirilmiştir.
+- **Parçalı veritabanı geri yükleme (v1.3.0):** `database.sql` tek istekte değil, offset kaydeden sorgu grupları hâlinde yüklenir; Plesk'in 30–60 sn limitinde yarıda kesilmez.
+- **SQL hata logu (v1.3.0):** ilk hatalı sorguda durur; tablo, MySQL hatası ve sorgu başını `wp-content/dbb-logs` içine yazar.
+- **Geri yükleme öncesi güvenlik yedeği (v1.3.0):** mevcut DB, üzerine yazılmadan önce `dbb-tmp/<iş>/pre-restore-*.sql` olarak alınır.
+- **Tanılama / Loglar (v1.3.0):** sunucu limitleri, istek süreleri, fatal/timeout, SQL hataları ve tarayıcıdaki 403/413/504 olayları panelden görüntülenir/indirilir.
+- **`wp-config.php` koruması (v1.3.0):** arşive alınmaz ve eski arşivlerden geri yazılmaz — hedef sitenin DB bilgileri ezilmez.
+- **Sunucuya uyumlu parça boyutu:** yükleme parçaları sunucunun gerçek `upload_max_filesize` limitinden hesaplanır; reddedilen parça otomatik küçültülüp yeniden denenir (v1.1.0). Plesk/WAF için 256 KB seçilebilir.
 - **Sürükle-bırak yükleme:** "Geri Yükle" sayfasında dosyayı alana bırakın veya tıklayıp seçin (v1.1.0).
 - **Otomatik alan adı değiştirme:** localhost → canlı domain geçişinde eski adres arşivden okunur, **serileştirme-güvenli** biçimde yeni adresle değiştirilir.
 - Yedek listesi, indirme, silme ve yedekten geri yükleme.
@@ -35,6 +41,13 @@ Eski sürüm sabit 2 MB parça kullanıyordu; `upload_max_filesize` sınırlı s
 
 - Parça boyutu sunucunun **gerçek yükleme limitinden** hesaplanır (`wp_max_upload_size()` × %70 güvenlik payı).
 - Sunucu parçayı reddederse veya ağ hatası olursa parça **yarıya düşürülüp otomatik yeniden denenir** (min 256 KB).
+
+### Plesk'te "tekrar deneniyor" / yarıda kalma (v1.3.0)
+
+- Yükleme isteği 413/403/500/504 dönerse parça **5 MB tavanına** çekilir; 413/403'te yarıya iner, diğer hatalarda aynı parça **30 kez** artan beklemeyle denenir.
+- `database.sql` **parçalı** yüklenir; her istek kendi offset'ini kaydeder. PHP timeout olsa bile kaldığı yerden devam eder.
+- Geri yükleme öncesi **mevcut DB'nin SQL yedeği** alınır (kapatmak için `dbb_safety_backup` filtresi).
+- Hata ve limitler: **Dr. Brown Backup → Tanılama / Loglar**.
 
 ## Dosya yapısı
 

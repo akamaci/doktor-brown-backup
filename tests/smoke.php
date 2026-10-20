@@ -96,7 +96,7 @@ check( 'comments: comment semicolon ignored', 1 === count( $c ) && false !== str
 /* ------------------------------------------------------------------ */
 
 $files = DBB_Filesystem::list_files();
-check( 'list_files: finds wp-config.php', in_array( 'wp-config.php', $files, true ) );
+check( 'list_files: wp-config.php arşive alınmıyor', ! in_array( 'wp-config.php', $files, true ) );
 check( 'list_files: finds uploads', in_array( 'wp-content/uploads/a.jpg', $files, true ) );
 $has_cache = false;
 foreach ( $files as $f ) {
@@ -107,6 +107,7 @@ foreach ( $files as $f ) {
 check( 'list_files: excludes cache', ! $has_cache );
 check( 'is_excluded: cache true', DBB_Filesystem::is_excluded( 'wp-content/cache/x.tmp' ) );
 check( 'is_excluded: uploads false', ! DBB_Filesystem::is_excluded( 'wp-content/uploads/a.jpg' ) );
+check( 'is_excluded: wp-config.php true', DBB_Filesystem::is_excluded( 'wp-config.php' ) );
 check( 'resolve: blocks traversal', false === DBB_Filesystem::resolve( '../../etc/passwd' ) );
 check( 'resolve: normal path', false !== strpos( (string) DBB_Filesystem::resolve( 'wp-config.php' ), 'wp-config.php' ) );
 
@@ -172,9 +173,9 @@ check(
 			&& false === strpos( $head, 'example.com' )
 );
 check(
-	'activate: başlık sürümü 1.2.0 ile tutarlı',
-	false !== strpos( $head, '* Version:           1.2.0' )
-			&& false !== strpos( $head, "DBB_VERSION', '1.2.0'" )
+	'activate: başlık sürümü 1.3.0 ile tutarlı',
+	false !== strpos( $head, '* Version:           1.3.0' )
+			&& false !== strpos( $head, "DBB_VERSION', '1.3.0'" )
 );
 check(
 	'activate: register_activation_hook ana dosyayı kullanıyor',
@@ -273,6 +274,91 @@ check(
 	'resume: i18n resumeAsk + resuming anahtarları ekli',
 	false !== strpos( $admin, "'resumeAsk'" )
 			&& false !== strpos( $admin, "'resuming'" )
+);
+
+/* ------------------------------------------------------------------ */
+/* v1.3.0 — tanılama, parçalı DB, güvenlik yedeği                     */
+/* ------------------------------------------------------------------ */
+
+$loggerf = file_get_contents( $plugin . 'includes/class-dbb-logger.php' );
+$dbf     = file_get_contents( $plugin . 'includes/class-dbb-db.php' );
+
+check(
+	'log: DBB_Logger sınıfı ve günlük dosyası var',
+	false !== strpos( $loggerf, 'class DBB_Logger' )
+			&& false !== strpos( $loggerf, "dbb-' . gmdate( 'Y-m-d' ) . '.log'" )
+);
+check(
+	'log: ortam/limit bilgisi kaydediliyor',
+	false !== strpos( $loggerf, "'max_execution_time'" )
+			&& false !== strpos( $loggerf, "'post_max_size'" )
+			&& false !== strpos( $loggerf, "'max_allowed_packet'" )
+);
+check(
+	'log: fatal/timeout shutdown ile yakalanıyor',
+	false !== strpos( $loggerf, 'register_shutdown_function' )
+			&& false !== strpos( $loggerf, 'E_ERROR' )
+);
+check(
+	'log: Tanılama sayfası menüye eklendi',
+	false !== strpos( $admin, "'dbb-logs'" )
+			&& false !== strpos( $admin, 'page_logs' )
+);
+check(
+	'log: istemci olayları sunucuya gönderiliyor',
+	false !== strpos( $pluginf, "'dbb_log_client'" )
+			&& false !== strpos( $js, "'dbb_log_client'" )
+);
+check(
+	'db: geri yükleme parçalı (restore_batch)',
+	false !== strpos( $dbf, 'public static function restore_batch' )
+			&& false !== strpos( $imp, 'DBB_DB::restore_batch' )
+);
+check(
+	'db: SQL hatası sessizce yutulmuyor',
+	false !== strpos( $dbf, '$wpdb->last_error' )
+			&& false !== strpos( $imp, 'Veritabanı geri yüklenirken SQL hatası' )
+);
+check(
+	'db: geri yükleme öncesi güvenlik yedeği adımı var',
+	false !== strpos( $imp, "'db-safety'" )
+			&& false !== strpos( $imp, 'step_db_safety' )
+			&& false !== strpos( $imp, 'pre-restore-' )
+);
+check(
+	'import: wp-config.php asla geri yazılmıyor',
+	false !== strpos( $imp, "'wp-config.php' === ltrim" )
+);
+check(
+	'upload: post_max_size aşımı net 413 mesajı veriyor',
+	false !== strpos( $imp, 'post_max_size' )
+			&& false !== strpos( $imp, 'bytes_from_ini' )
+);
+check(
+	'ui: parça boyutu seçimi (256 KB … 2 MB) var',
+	false !== strpos( $admin, 'id="dbb-chunk-size"' )
+			&& false !== strpos( $js, "#dbb-chunk-size" )
+);
+check(
+	'js: sonsuz retry yerine sınırlı + geri çekilmeli deneme',
+	false !== strpos( $js, 'attempt < 30' )
+			&& false !== strpos( $js, '( attempt + 1 ) * 1000' )
+);
+check(
+	'upload: 5 MB parça tavanı (Doktor Brown protokolü)',
+	false !== strpos( $admin, 'const MAX_CHUNK = 5242880' )
+			&& false !== strpos( $imp, "5 * 1024 * 1024" )
+			&& false !== strpos( $js, 'DBB.maxChunk' )
+);
+check(
+	'upload: 413/403 alınca parça yarıya iniyor',
+	false !== strpos( $js, 'sizeRejected' )
+			&& false !== strpos( $js, 'Math.floor( chunk / 2 )' )
+);
+check(
+	'upload: 10 GB dosya sınırı + disk alanı kontrolü',
+	false !== strpos( $js, '10 * 1024 * 1024 * 1024' )
+			&& false !== strpos( $imp, 'disk_free_space' )
 );
 
 /* ------------------------------------------------------------------ */

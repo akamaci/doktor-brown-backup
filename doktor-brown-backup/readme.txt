@@ -4,7 +4,7 @@ Tags: backup, restore, migration, database, export
 Requires at least: 5.6
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 1.2.0
+Stable tag: 1.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -18,6 +18,19 @@ WordPress sitenizin tam yedeğini alır ve geri yükler.
 * Tüm site dosyaları + veritabanı → tek `.dbb` arşivine paketler ve geri yükler.
 * **`.wpress` arşivlerini içe aktarma** desteği.
 * **Parçalı (chunked) çalışma**: büyük sitelerde zaman aşımı/`memory_limit` sorunu yaşatmaz.
+* **10 GB'a kadar yükleme:** parça boyutu **5 MB tavanlıdır** (PHP sınırı daha
+  yüksek olsa bile). 413/403'te parça yarıya iner; diğer hatalarda aynı parça
+  30 kez, artan beklemeyle tekrar denenir. Bu protokol Doktor Brown Backup
+  için özgün olarak geliştirilmiştir.
+* **Parçalı veritabanı geri yükleme:** SQL dosyası tek istekte değil, güvenli
+  sorgu grupları hâlinde yüklenir; Plesk/PHP 30–60 sn limitinde yarıda kesilmez.
+* **Geri yükleme öncesi güvenlik yedeği:** mevcut DB, üzerine yazılmadan önce
+  `wp-content/dbb-tmp/<iş>/pre-restore-*.sql` olarak alınır.
+* **Tanılama / Loglar:** her AJAX isteği, sunucu limitleri, yavaş adımlar,
+  SQL hataları, PHP fatal/timeout ve tarayıcı tarafındaki 403/413/504 yanıtları
+  `wp-content/dbb-logs/` altına yazılır; panelden indirilebilir.
+* **`wp-config.php` asla yedeklenmez/geri yazılmaz** (hedef sitenin DB
+  bilgilerini ezmesin diye).
 * **Otomatik alan adı değiştirme**: localhost → canlı domain geçişinde eski adres
   arşivden okunur ve yeni adresle **serileştirme-güvenli** biçimde değiştirilir.
 * Yedek listesi, indirme, silme ve **doğrudan geri yükleme**.
@@ -39,10 +52,54 @@ Evet. ZipArchive (php-zip) yoksa eklenti uyarı verir ve çalışmaz.
 Yedeği yeni siteye kurun, "Geri Yükle" ekranında **Yeni Site Adresi** alanına hedef URL'yi yazın.
 
 = Hangi dosyalar dahil? =
-WordPress kök dizini. `wp-content/cache`, `wp-content/upgrade`, `.git` ve yedek klasörleri
-otomatik hariç tutulur (`dbb_export_excludes` filtresiyle değiştirilir).
+WordPress kök dizini. `wp-config.php`, `.user.ini`, `wp-content/cache`, `wp-content/upgrade`,
+`.git` ve yedek klasörleri otomatik hariç tutulur (`dbb_export_excludes` filtresiyle değiştirilir).
+
+= Geri yükleme neden yarıda kalıyor? =
+Eski sürüm tüm `database.sql` dosyasını tek AJAX isteğinde çalıştırıyordu. Plesk gibi
+30–60 sn istek limiti olan sunucularda istek kesiliyor, bazı tablolar DROP edilmiş ama
+yeniden oluşturulmamış kalıyordu. 1.3.0 bunu sorgu gruplarına böler; her istek kendi
+offset'ini kaydeder ve kaldığı yerden devam eder. Ayrıca ilk SQL hatasında durur ve
+hatanın tablosunu/ifadesini loglar (eskiden sessizce devam ediyordu).
+
+= Yükleme neden "tekrar deneniyor" diyor? =
+Bu mesaj tarayıcının isteği 413/403/500/504 veya ağ hatasıyla düştüğü anlamına gelir.
+1.3.0 her denemeyi HTTP kodu ve sunucu yanıtıyla `dbb-logs` dosyasına yazar. Parça
+boyutu 5 MB ile sınırlıdır; 413/403 gelirse otomatik yarıya iner ve aynı parça
+30 kez denenir. Yine takılırsa "Geri Yükle" ekranından parça boyutunu **256 KB** yapın.
+
+= 10 GB yükleme gerçekten mümkün mü? =
+Evet, sunucunun disk alanı yettiği sürece. Dosya hiçbir zaman tek parça hâlinde
+gönderilmez; 5 MB'lık parçalar hâlinde gönderilip sunucuda birleştirilir. Bu yüzden
+`upload_max_filesize` 2 MB olsa bile 10 GB arşiv yüklenebilir.
+
+= Yükleme protokolü nedir? =
+Dosya 5 MB'lık parçalara bölünür. Sunucu 413/403 dönerse parça yarıya indirilir;
+ağ hatasında aynı parça artan beklemeyle 30 kez yeniden denenir. Parçalar sunucuda
+offset sırasına göre birleştirilir; kopan yükleme kaldığı yerden devam eder.
 
 == Changelog ==
+
+= 1.3.0 =
+* **5 MB parça tavanı + 30 denemeli yükleme:** 10 GB'a kadar arşiv, Plesk/WAF
+  limitlerine rağmen yüklenir. 413/403'te parça yarıya iner; ağ hatasında aynı
+  parça artan beklemeyle tekrar denenir.
+* **Parçalı DB geri yükleme:** `database.sql` sorgu grupları hâlinde, offset
+  kaydederek yüklenir. Plesk/FPM `max_execution_time` kesintisi "yarıda kalma"yı
+  bitirir.
+* **SQL hatası artık fatal:** ilk hatada durur, tablo + hata + ifade başını loglar.
+  Eskiden `$wpdb->query()` hataları yutuluyor ve yarım DB ile devam ediliyordu.
+* **Geri yükleme öncesi güvenlik yedeği** (`db-safety` adımı, tablo tablo).
+* **Tanılama / Loglar ekranı:** ortam (PHP/DB limitleri, `max_allowed_packet`,
+  disk), istek süreleri, fatal/timeout, SQL hataları ve istemci 403/413/504
+  olayları. Log indirme + temizleme.
+* **`wp-config.php` / `.user.ini` arşiv dışı**; eski arşivlerde de geri yazılmaz.
+* **Büyük arşivi kopyalamadan geri yükleme:** "listedeki yedeği geri yükle"
+  artık 100+ MB dosyayı tek istekte kopyalamaya çalışmaz.
+* **Sınırlı + geri çekilmeli retry** (sonsuz "tekrar deneniyor" döngüsü yerine).
+* **post_max_size aşımı** net 413 mesajı verir (eskiden "İş bulunamadı" 404).
+* Yükleme ekranına **parça boyutu seçimi** (Otomatik / 256 KB – 2 MB).
+* Sürüm 1.3.0.
 
 = 1.2.0 =
 * **Kaldığı yerden devam (resume):** yükleme ağ kesintisinde koparsa yarım
@@ -60,6 +117,10 @@ otomatik hariç tutulur (`dbb_export_excludes` filtresiyle değiştirilir).
 * İlk sürüm: dışa aktarma, içe aktarma, liste/indir/sil, parçalı işlem.
 
 == Upgrade Notice ==
+
+= 1.3.0 =
+Parçalı DB geri yükleme + SQL hata logu + Tanılama/Loglar + wp-config koruması.
+Plesk'te yarıda kalan geri yüklemeler için zorunlu güncelleme.
 
 = 1.2.0 =
 Kaldığı yerden devam (resume) + çift-parça/sıra koruması.

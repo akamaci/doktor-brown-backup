@@ -24,6 +24,9 @@ class DBB_Importer {
 	/** @var int Seconds allowed per step. */
 	const TIME_BUDGET = 8;
 
+	/** @var int SQL statements per DB step. */
+	const DB_STATEMENTS_PER_STEP = 600;
+
 	/* ------------------------------------------------------------------ */
 	/* AJAX wrappers                                                       */
 	/* ------------------------------------------------------------------ */
@@ -146,9 +149,40 @@ class DBB_Importer {
 	public function ajax_upload() {
 		DBB_Plugin::verify_request();
 
+		/* Detect a body that exceeded post_max_size: PHP silently empties both
+		   $_POST and $_FILES, which used to surface as "İş bulunamadı" (404). */
+		$content_length = isset( $_SERVER['CONTENT_LENGTH'] ) ? (int) $_SERVER['CONTENT_LENGTH'] : 0;
+		$post_max       = self::bytes_from_ini( ini_get( 'post_max_size' ) );
+		if ( $content_length > 0 && $post_max > 0 && $content_length > $post_max ) {
+			DBB_Logger::error(
+				'upload chunk exceeds post_max_size',
+				array( 'content_length' => $content_length, 'post_max_size' => $post_max )
+			);
+			wp_send_json_error(
+				array(
+					'message' => sprintf(
+						/* translators: 1: request bytes, 2: limit */
+						__( 'Parça sunucunun post_max_size sınırını aştı (%1$s > %2$s). Parça küçültülüyor.', 'doktor-brown-backup' ),
+						size_format( $content_length ),
+						size_format( $post_max )
+					),
+				),
+				413
+			);
+		}
+
 		$job   = isset( $_POST['job'] ) ? sanitize_file_name( wp_unslash( $_POST['job'] ) ) : '';
 		$state = $this->load_state( $job );
 		if ( ! $state ) {
+			DBB_Logger::error(
+				'upload chunk: job not found',
+				array(
+					'job'            => $job,
+					'content_length' => $content_length,
+					'post_present'   => ! empty( $_POST ),
+					'files_present'  => ! empty( $_FILES ),
+				)
+			);
 			wp_send_json_error( array( 'message' => __( 'İş bulunamadı.', 'doktor-brown-backup' ) ), 404 );
 		}
 
@@ -179,6 +213,18 @@ class DBB_Importer {
 			wp_send_json_error( array( 'message' => __( 'Parça okunamadı.', 'doktor-brown-backup' ) ), 400 );
 		}
 
+		$max_chunk = (int) apply_filters( 'dbb_max_chunk_size', 5 * 1024 * 1024 );
+		if ( $chunk_len > $max_chunk + 65536 ) {
+			DBB_Logger::warn( 'upload chunk above hard limit', array( 'chunk' => $chunk_len, 'max' => $max_chunk ) );
+			wp_send_json_error( array( 'message' => __( 'Parça 5 MB sınırını aştı — parça küçültülüyor.', 'doktor-brown-backup' ) ), 413 );
+		}
+
+		$free = @disk_free_space( dirname( $state['archive'] ) ); // phpcs:ignore
+		if ( false !== $free && $free < ( $chunk_len + 50 * 1024 * 1024 ) ) {
+			DBB_Logger::error( 'not enough disk space for upload', array( 'free' => $free, 'need' => $chunk_len ) );
+			wp_send_json_error( array( 'message' => __( 'Sunucuda yeterli disk alanı yok.', 'doktor-brown-backup' ) ), 507 );
+		}
+
 		/* v1.2.0 — kaldığı yerden devam: parça, sunucuda ZATEN kabul
 		   edilmiş baytlara denk geliyorsa (çift gönderim / eski parça)
 		   yazmayı atla; gerçek `received` değerini döndür ki istemci
@@ -189,6 +235,7 @@ class DBB_Importer {
 			$disk_ok = (int) filesize( $state['archive'] );
 		}
 		if ( $offset > $disk_ok ) {
+			DBB_Logger::warn( 'upload chunk rejected: gap', array( 'offset' => $offset, 'disk' => $disk_ok ) );
 			wp_send_json_error( array( 'message' => __( 'Parça sırası bozuk — dosya bozulmasın diye reddedildi.', 'doktor-brown-backup' ) ), 409 );
 		}
 		if ( $offset + $chunk_len <= $disk_ok ) {
@@ -218,8 +265,18 @@ class DBB_Importer {
 		fclose( $out ); // phpcs:ignore
 		@unlink( $tmp ); // phpcs:ignore
 
-		$state['bytes'] = max( $state['bytes'], $offset + (int) filesize( $state['archive'] ) );
+		$state['bytes'] = (int) filesize( $state['archive'] );
 		$this->save_state( $state );
+
+		DBB_Logger::info(
+			'upload chunk accepted',
+			array(
+				'job'     => $job,
+				'offset'  => $offset,
+				'chunk'   => $chunk_len,
+				'received'=> $state['bytes'],
+			)
+		);
 
 		wp_send_json_success( array( 'received' => (int) filesize( $state['archive'] ) ) );
 	}
@@ -285,6 +342,8 @@ class DBB_Importer {
 			'status'      => 'uploading',
 			'step'        => 'upload',
 			'archive'     => $job_dir . '/import.bin',
+			'job_dir'     => $job_dir,
+			'cleanup_archive' => true,
 			'bytes'       => 0,
 			'index'       => 0,
 			'files'       => array(),
@@ -292,6 +351,7 @@ class DBB_Importer {
 			'message'     => __( 'Yükleme bekleniyor…', 'doktor-brown-backup' ),
 		);
 		$this->save_state( $state );
+		DBB_Logger::info( 'import job created (upload)', array( 'job' => $job ) );
 
 		return array( 'job' => $job );
 	}
@@ -315,9 +375,19 @@ class DBB_Importer {
 		$job_dir = DBB_TMP_DIR . '/' . $job;
 		wp_mkdir_p( $job_dir );
 
-		$archive = $job_dir . '/import.' . pathinfo( $file, PATHINFO_EXTENSION );
-		if ( ! @copy( $src, $archive ) ) { // phpcs:ignore
-			return array( 'error' => __( 'Yedek kopyalanamadı.', 'doktor-brown-backup' ) );
+		/* Use the stored backup in place. Copying a 100+ MB archive inside one
+		   PHP request regularly exceeds Plesk's 30–60 s limit and was one of
+		   the "stops halfway" causes. */
+		$archive = $src;
+		$cleanup = false;
+
+		if ( ! is_readable( $archive ) ) {
+			$archive = $job_dir . '/import.' . pathinfo( $file, PATHINFO_EXTENSION );
+			if ( ! @copy( $src, $archive ) ) { // phpcs:ignore
+				DBB_Logger::error( 'prepare_from_backup: copy failed', array( 'src' => $src, 'dst' => $archive ) );
+				return array( 'error' => __( 'Yedek kopyalanamadı.', 'doktor-brown-backup' ) );
+			}
+			$cleanup = true;
 		}
 
 		$state = array(
@@ -326,6 +396,8 @@ class DBB_Importer {
 			'status'      => 'running',
 			'step'        => 'detect',
 			'archive'     => $archive,
+			'job_dir'     => $job_dir,
+			'cleanup_archive' => $cleanup,
 			'bytes'       => (int) filesize( $archive ),
 			'index'       => 0,
 			'files'       => array(),
@@ -334,6 +406,7 @@ class DBB_Importer {
 			'message'     => __( 'Geri yükleme hazırlanıyor…', 'doktor-brown-backup' ),
 		);
 		$this->save_state( $state );
+		DBB_Logger::info( 'import job created (stored backup)', array( 'job' => $job, 'file' => $file, 'in_place' => ! $cleanup ) );
 
 		return array( 'job' => $job );
 	}
@@ -357,6 +430,13 @@ class DBB_Importer {
 		}
 		$state['auto_domain'] = (bool) $auto_domain;
 
+		if ( empty( $state['job_dir'] ) ) {
+			$state['job_dir'] = DBB_TMP_DIR . '/' . $state['job'];
+		}
+		if ( ! isset( $state['cleanup_archive'] ) ) {
+			$state['cleanup_archive'] = ( 0 === strpos( (string) $state['archive'], $state['job_dir'] ) );
+		}
+
 		if ( 'upload' === $state['step'] ) {
 			$state['step'] = 'detect';
 		}
@@ -374,8 +454,11 @@ class DBB_Importer {
 				case 'wp-extract':   // .wpress
 					$this->step_extract_wpress( $state, $started );
 					break;
+				case 'db-safety':
+					$this->step_db_safety( $state, $started );
+					break;
 				case 'db':
-					$this->step_db( $state );
+					$this->step_db( $state, $started );
 					break;
 				case 'replace':
 					$this->step_replace( $state, $started );
@@ -391,10 +474,23 @@ class DBB_Importer {
 			$state['status']  = 'error';
 			$state['message'] = $e->getMessage();
 			$this->save_state( $state );
+			DBB_Logger::error( 'import step exception', array( 'job' => $job, 'step' => $state['step'], 'error' => $e->getMessage() ) );
+			DBB_Logger::exception( $e, array( 'job' => $job ) );
 			return array( 'error' => $e->getMessage() );
 		}
 
 		$this->save_state( $state );
+
+		DBB_Logger::info(
+			'import step',
+			array(
+				'job'      => $job,
+				'step'     => $state['step'],
+				'status'   => $state['status'],
+				'duration' => round( microtime( true ) - $started, 2 ),
+				'progress' => $this->progress( $state ),
+			)
+		);
 
 		return array(
 			'status'   => $state['status'],
@@ -416,7 +512,7 @@ class DBB_Importer {
 	 */
 	private function step_detect( &$state ) {
 		$archive = $state['archive'];
-		$extract = dirname( $archive ) . '/extract';
+		$extract = ( ! empty( $state['job_dir'] ) ? $state['job_dir'] : dirname( $archive ) ) . '/extract';
 		if ( ! file_exists( $extract ) ) {
 			wp_mkdir_p( $extract );
 		}
@@ -442,6 +538,7 @@ class DBB_Importer {
 			}
 			$state['step']    = 'extract';
 			$state['message'] = __( 'Arşiv çıkartılıyor…', 'doktor-brown-backup' );
+			DBB_Logger::info( 'detected .dbb archive', array( 'archive' => $archive, 'size' => filesize( $archive ) ) );
 			return;
 		}
 
@@ -541,12 +638,95 @@ class DBB_Importer {
 	 * @param array $state State (by reference).
 	 * @return void
 	 */
-	private function step_db( &$state ) {
+	private function step_db( &$state, $started ) {
 		$sql = $state['extract_dir'] . '/' . DBB_Archive::DATABASE;
 		if ( ! is_file( $sql ) ) {
 			throw new Exception( __( 'Arşivde veritabanı (.sql) bulunamadı.', 'doktor-brown-backup' ) );
 		}
-		DBB_DB::restore_file( $sql );
+
+		// First restore: take a safety dump of the DB we are about to replace.
+		if ( empty( $state['safety_done'] ) && ! isset( $state['db_offset'] ) ) {
+			$state['db_offset']    = 0;
+			$state['db_size']      = (int) filesize( $sql );
+			$state['db_executed']  = 0;
+			$state['db_table']     = '';
+
+			/**
+			 * Disable the pre-restore safety dump (not recommended).
+			 *
+			 * @param bool  $enabled Default true.
+			 * @param array $state   Import state.
+			 */
+			if ( apply_filters( 'dbb_safety_backup', true, $state ) ) {
+				$state['safety_path']   = ( ! empty( $state['job_dir'] ) ? $state['job_dir'] : dirname( $state['archive'] ) ) . '/pre-restore-' . gmdate( 'Ymd-His' ) . '.sql';
+				$state['safety_tables'] = DBB_DB::tables();
+				$state['safety_index']  = 0;
+				$state['step']          = 'db-safety';
+				$state['message']       = __( 'Mevcut veritabanı güvenlik yedeğine alınıyor…', 'doktor-brown-backup' );
+				DBB_Logger::info( 'safety dump started', array( 'tables' => count( $state['safety_tables'] ), 'path' => $state['safety_path'] ) );
+				return;
+			}
+			$state['safety_done'] = true;
+		}
+
+		$budget = microtime( true ) + self::TIME_BUDGET;
+		$batch  = DBB_DB::restore_batch( $sql, (int) $state['db_offset'], self::DB_STATEMENTS_PER_STEP, $budget );
+
+		$state['db_offset']   = (int) $batch['offset'];
+		$state['db_executed'] = (int) ( isset( $state['db_executed'] ) ? $state['db_executed'] : 0 ) + (int) $batch['executed'];
+		if ( ! empty( $batch['table'] ) ) {
+			$state['db_table'] = $batch['table'];
+		}
+
+		if ( ! empty( $batch['error'] ) ) {
+			$size = isset( $state['db_size'] ) ? (int) $state['db_size'] : max( 1, (int) filesize( $sql ) );
+			DBB_Logger::error(
+				'DB restore failed',
+				array(
+					'job'      => $state['job'],
+					'table'    => isset( $state['db_table'] ) ? $state['db_table'] : '',
+					'offset'   => $state['db_offset'],
+					'percent'  => round( 100 * $state['db_offset'] / $size, 1 ),
+					'executed' => $state['db_executed'],
+					'mysql'    => $batch['error'],
+					'sql_head' => isset( $batch['stmt'] ) ? $batch['stmt'] : '',
+				)
+			);
+			throw new Exception(
+				sprintf(
+					/* translators: 1: table, 2: mysql error */
+					__( 'Veritabanı geri yüklenirken SQL hatası (%1$s): %2$s', 'doktor-brown-backup' ),
+					$state['db_table'] ? $state['db_table'] : '?',
+					$batch['error']
+				)
+			);
+		}
+
+		if ( ! $batch['done'] ) {
+			$size = isset( $state['db_size'] ) ? (int) $state['db_size'] : max( 1, (int) filesize( $sql ) );
+			$pct  = (int) round( 100 * $state['db_offset'] / $size );
+			$state['message'] = sprintf(
+				/* translators: 1: percent, 2: table, 3: statements */
+				__( 'Veritabanı geri yükleniyor… %% %1$d · %2$s · %3$s sorgu', 'doktor-brown-backup' ),
+				$pct,
+				$state['db_table'] ? $state['db_table'] : '—',
+				number_format_i18n( $state['db_executed'] )
+			);
+			DBB_Logger::info(
+				'db batch',
+				array(
+					'job'      => $state['job'],
+					'offset'   => $state['db_offset'],
+					'size'     => $size,
+					'percent'  => $pct,
+					'table'    => $state['db_table'],
+					'executed' => $state['db_executed'],
+				)
+			);
+			return;
+		}
+
+		DBB_Logger::info( 'DB restore finished', array( 'job' => $state['job'], 'statements' => $state['db_executed'] ) );
 
 		$state['replace_tables'] = DBB_DB::tables();
 		$state['replace_index']  = 0;
@@ -554,6 +734,72 @@ class DBB_Importer {
 		$state['message']        = ( 'replace' === $state['step'] )
 			? __( 'Site adresi güncelleniyor…', 'doktor-brown-backup' )
 			: __( 'Dosyalar geri yükleniyor…', 'doktor-brown-backup' );
+	}
+
+	/**
+	 * Dump the current database into dbb-tmp before it is replaced.
+	 *
+	 * Runs one batch of tables per request so Plesk/FPM time limits do not
+	 * kill the dump halfway. The file stays on disk if the restore fails and
+	 * is removed together with the job directory only after a successful run.
+	 *
+	 * @param array $state   State (by reference).
+	 * @param float $started Request start time.
+	 * @return void
+	 */
+	private function step_db_safety( &$state, $started ) {
+		if ( empty( $state['safety_path'] ) ) {
+			$state['safety_done'] = true;
+			$state['step']        = 'db';
+			return;
+		}
+
+		$tables = isset( $state['safety_tables'] ) ? (array) $state['safety_tables'] : DBB_DB::tables();
+		$total  = count( $tables );
+		$first  = ( 0 === (int) $state['safety_index'] );
+
+		$fp = fopen( $state['safety_path'], $first ? 'wb' : 'ab' ); // phpcs:ignore
+		if ( ! $fp ) {
+			throw new Exception( __( 'Güvenlik yedeği yazılamadı.', 'doktor-brown-backup' ) );
+		}
+		if ( $first ) {
+			fwrite( $fp, "SET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS=0;\n\n" ); // phpcs:ignore
+		}
+
+		$done = 0;
+		while ( $state['safety_index'] < $total && $done < 2 && ( microtime( true ) - $started ) < self::TIME_BUDGET ) {
+			DBB_DB::dump_table( $tables[ $state['safety_index'] ], $fp );
+			$state['safety_index']++;
+			$done++;
+		}
+
+		$finished = ( $state['safety_index'] >= $total );
+		if ( $finished ) {
+			fwrite( $fp, "\nSET FOREIGN_KEY_CHECKS=1;\n" ); // phpcs:ignore
+		}
+		fclose( $fp ); // phpcs:ignore
+
+		if ( ! $finished ) {
+			$state['message'] = sprintf(
+				/* translators: 1: done tables, 2: total tables */
+				__( 'Güvenlik yedeği alınıyor… (%1$d/%2$d tablo)', 'doktor-brown-backup' ),
+				(int) $state['safety_index'],
+				$total
+			);
+			return;
+		}
+
+		$state['safety_done'] = true;
+		$state['step']        = 'db';
+		$state['message']     = __( 'Veritabanı geri yükleniyor…', 'doktor-brown-backup' );
+		DBB_Logger::info(
+			'safety dump finished',
+			array(
+				'path'   => $state['safety_path'],
+				'size'   => is_file( $state['safety_path'] ) ? filesize( $state['safety_path'] ) : 0,
+				'tables' => $total,
+			)
+		);
 	}
 
 	/**
@@ -656,12 +902,25 @@ class DBB_Importer {
 			$rel = $state['files'][ $state['index'] ];
 			$src = $base . '/' . $rel;
 			$dst = DBB_Filesystem::resolve( $rel );
+
+			/* Never overwrite wp-config.php: the archive's copy points at the
+			   source server's database (e.g. root/localhost) and would take the
+			   destination site down instantly. */
+			if ( 'wp-config.php' === ltrim( str_replace( '\\', '/', $rel ), '/' ) ) {
+				DBB_Logger::warn( 'skipped wp-config.php during file restore', array( 'job' => $state['job'] ) );
+				$state['index']++;
+				$done++;
+				continue;
+			}
+
 			if ( $dst && is_file( $src ) ) {
 				$dir = dirname( $dst );
 				if ( ! file_exists( $dir ) ) {
 					wp_mkdir_p( $dir );
 				}
-				@copy( $src, $dst ); // phpcs:ignore
+				if ( ! @copy( $src, $dst ) ) { // phpcs:ignore
+					DBB_Logger::warn( 'file copy failed', array( 'src' => $src, 'dst' => $dst ) );
+				}
 			}
 			$state['index']++;
 			$done++;
@@ -692,13 +951,15 @@ class DBB_Importer {
 			update_option( 'home', $target );
 		}
 
-		$this->rmdir_recursive( dirname( $state['archive'] ) );
+		$job_dir = ! empty( $state['job_dir'] ) ? $state['job_dir'] : dirname( $state['archive'] );
+		$this->rmdir_recursive( $job_dir );
 
 		$state['status']  = 'done';
 		$state['step']    = 'done';
 		$state['message'] = $target
 			? sprintf( /* translators: %s: url */ __( 'Geri yükleme tamamlandı. Adres: %s', 'doktor-brown-backup' ), $target )
 			: __( 'Geri yükleme tamamlandı.', 'doktor-brown-backup' );
+		DBB_Logger::info( 'import finished', array( 'job' => $state['job'], 'target' => $target ) );
 	}
 
 	/**
@@ -744,7 +1005,13 @@ class DBB_Importer {
 				$total = max( 1, (int) $state['wp_total'] );
 				return (int) round( 10 + 25 * ( $state['wp_pos'] / $total ) );
 			case 'db':
-				return 45;
+				$size = isset( $state['db_size'] ) ? max( 1, (int) $state['db_size'] ) : 1;
+				$pos  = isset( $state['db_offset'] ) ? (int) $state['db_offset'] : 0;
+				return (int) round( 22 + 23 * min( 1, $pos / $size ) );
+			case 'db-safety':
+				$total = isset( $state['safety_tables'] ) ? max( 1, count( $state['safety_tables'] ) ) : 1;
+				$done  = isset( $state['safety_index'] ) ? (int) $state['safety_index'] : 0;
+				return (int) round( 15 + 7 * min( 1, $done / $total ) );
 			case 'replace':
 				$total = max( 1, count( $state['replace_tables'] ) );
 				return (int) round( 50 + 10 * ( $state['replace_index'] / $total ) );
@@ -756,6 +1023,32 @@ class DBB_Importer {
 			default:
 				return 20;
 		}
+	}
+
+	/**
+	 * Convert a php.ini size ("64M", "1G", "0") to bytes.
+	 *
+	 * @param string $value ini value.
+	 * @return int
+	 */
+	private static function bytes_from_ini( $value ) {
+		$value = trim( (string) $value );
+		if ( '' === $value ) {
+			return 0;
+		}
+		$unit = strtolower( substr( $value, -1 ) );
+		$num  = (float) $value;
+		switch ( $unit ) {
+			case 'g':
+				$num *= 1024;
+				// Fall through.
+			case 'm':
+				$num *= 1024;
+				// Fall through.
+			case 'k':
+				$num *= 1024;
+		}
+		return (int) $num;
 	}
 
 	/**

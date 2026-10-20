@@ -18,6 +18,20 @@ class DBB_Admin {
 	/** @var string */
 	const SLUG = 'dbb-backups';
 
+	/** @var int Hard ceiling per upload chunk (5 MB). */
+	const MAX_CHUNK = 5242880;
+
+	/**
+	 * Maximum chunk size. Kept at 5 MB even when PHP allows more: front
+	 * proxies (Plesk nginx, ModSecurity, WAF) reject large bodies with
+	 * 413/403, which was the "tekrar deneniyor" loop.
+	 *
+	 * @return int
+	 */
+	private static function max_chunk_size() {
+		return (int) apply_filters( 'dbb_max_chunk_size', self::MAX_CHUNK );
+	}
+
 	/**
 	 * Register the admin menu.
 	 *
@@ -37,6 +51,7 @@ class DBB_Admin {
 		add_submenu_page( self::SLUG, __( 'Yedekler', 'doktor-brown-backup' ), __( 'Yedekler', 'doktor-brown-backup' ), DBB_Plugin::CAPABILITY, self::SLUG, array( __CLASS__, 'page_list' ) );
 		add_submenu_page( self::SLUG, __( 'Yeni Yedek', 'doktor-brown-backup' ), __( 'Yeni Yedek', 'doktor-brown-backup' ), DBB_Plugin::CAPABILITY, 'dbb-new', array( __CLASS__, 'page_export' ) );
 		add_submenu_page( self::SLUG, __( 'Geri Yükle', 'doktor-brown-backup' ), __( 'Geri Yükle', 'doktor-brown-backup' ), DBB_Plugin::CAPABILITY, 'dbb-import', array( __CLASS__, 'page_import' ) );
+		add_submenu_page( self::SLUG, __( 'Tanılama / Loglar', 'doktor-brown-backup' ), __( 'Tanılama / Loglar', 'doktor-brown-backup' ), DBB_Plugin::CAPABILITY, 'dbb-logs', array( __CLASS__, 'page_logs' ) );
 	}
 
 	/**
@@ -53,9 +68,19 @@ class DBB_Admin {
 	 * @return int Bytes.
 	 */
 	private static function upload_chunk_size() {
-		$limit = ( 0 < wp_max_upload_size() ) ? wp_max_upload_size() : 2 * 1024 * 1024;
-		// Reserve mud for multipart/form-data overhead + base64-less binary head.
-		return (int) floor( $limit * 0.7 );
+		$php   = ( 0 < wp_max_upload_size() ) ? wp_max_upload_size() : 2 * 1024 * 1024;
+		$limit = min( $php, self::max_chunk_size() );
+
+		/**
+		 * Filter the calculated chunk size. Useful on hosts whose front proxy
+		 * (nginx / Plesk / ModSecurity) rejects bodies below PHP's own limit.
+		 *
+		 * @param int $bytes Chunk size in bytes.
+		 */
+		$bytes = (int) apply_filters( 'dbb_upload_chunk_size', (int) floor( $limit * 0.7 ) );
+
+		// Never exceed PHP's own limit, never exceed 5 MB, never go under 128 KB.
+		return max( 131072, min( $bytes, (int) $limit, self::max_chunk_size() ) );
 	}
 
 	/**
@@ -65,7 +90,7 @@ class DBB_Admin {
 	 * @return void
 	 */
 	public static function enqueue( $hook ) {
-		if ( false === strpos( $hook, self::SLUG ) && false === strpos( $hook, 'dbb-new' ) && false === strpos( $hook, 'dbb-import' ) ) {
+		if ( false === strpos( $hook, self::SLUG ) && false === strpos( $hook, 'dbb-new' ) && false === strpos( $hook, 'dbb-import' ) && false === strpos( $hook, 'dbb-logs' ) ) {
 			return;
 		}
 
@@ -86,7 +111,9 @@ class DBB_Admin {
 				   reddediyordu → ilerleme %4'te takılıp kalıyordu. */
 				'chunkSize' => self::upload_chunk_size(),
 				'uploadLimit' => (int) wp_max_upload_size(),
+				'maxChunk'  => self::max_chunk_size(),
 				'zipOk'     => DBB_Archive::available(),
+				'logUrl'    => admin_url( 'admin.php?page=dbb-logs' ),
 				'i18n'      => array(
 					'starting'  => __( 'Başlatılıyor…', 'doktor-brown-backup' ),
 					'exporting' => __( 'Yedekleniyor…', 'doktor-brown-backup' ),
@@ -100,6 +127,9 @@ class DBB_Admin {
 					'resumeAsk'  => __( 'Yarıda kalan bir yükleme bulundu. Kaldığı yerden devam edilsin mi?', 'doktor-brown-backup' ),
 					'resuming'   => __( 'Kaldığı yerden devam ediliyor…', 'doktor-brown-backup' ),
 					'confirmRestore' => __( 'Bu yedeği geri yüklemek mevcut siteyi tamamen değiştirir. Devam edilsin mi?', 'doktor-brown-backup' ),
+					'retry'      => __( 'tekrar deneniyor', 'doktor-brown-backup' ),
+					'giveUp'     => __( 'Sunucu isteği sürekli reddetti. Tanılama / Loglar sayfasındaki kaydı paylaşın.', 'doktor-brown-backup' ),
+					'seeLogs'    => __( 'Ayrıntılar: Tanılama / Loglar', 'doktor-brown-backup' ),
 				),
 			)
 		);
@@ -205,6 +235,19 @@ class DBB_Admin {
 						</div>
 						<p class="description" id="dbb-file-name"></p>
 						<p class="description"><?php esc_html_e( 'Yalnızca .dbb ve .wpress uzantılı dosyalar desteklenir.', 'doktor-brown-backup' ); ?></p>
+					</td>
+				</tr>
+				<tr>
+					<th><label for="dbb-chunk-size"><?php esc_html_e( 'Parça Boyutu', 'doktor-brown-backup' ); ?></label></th>
+					<td>
+						<select id="dbb-chunk-size">
+							<option value="0"><?php esc_html_e( 'Otomatik (sunucu sınırına göre)', 'doktor-brown-backup' ); ?></option>
+							<option value="262144">256 KB</option>
+							<option value="524288">512 KB</option>
+							<option value="1048576">1 MB</option>
+							<option value="2097152">2 MB</option>
+						</select>
+						<p class="description"><?php esc_html_e( 'Plesk/WAF 403 veya 413 verirse 256 KB seçip yeniden deneyin. Sunucu limiti aşılırsa parça otomatik küçültülür.', 'doktor-brown-backup' ); ?></p>
 					</td>
 				</tr>
 				<tr>
@@ -426,5 +469,113 @@ class DBB_Admin {
 		self::index_remove( $file );
 
 		wp_send_json_success( array( 'message' => __( 'Silindi.', 'doktor-brown-backup' ) ) );
+	}
+
+	/**
+	 * AJAX: receive a client-side diagnostic event.
+	 *
+	 * Client failures (413/403 from a proxy, network resets, JS exceptions)
+	 * never reach PHP as normal requests, so the browser reports them here.
+	 *
+	 * @return void
+	 */
+	public static function ajax_log_client() {
+		DBB_Plugin::verify_request();
+
+		$raw = isset( $_POST['payload'] ) ? wp_unslash( $_POST['payload'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput
+		$payload = json_decode( (string) $raw, true );
+		if ( ! is_array( $payload ) ) {
+			$payload = array( 'message' => 'client payload (raw)', 'raw' => substr( (string) $raw, 0, 2000 ) );
+		}
+		DBB_Logger::client( $payload );
+
+		wp_send_json_success( array( 'logged' => true ) );
+	}
+
+	/**
+	 * Diagnostics / logs page.
+	 *
+	 * @return void
+	 */
+	public static function page_logs() {
+		$env  = DBB_Logger::environment();
+		$tail = DBB_Logger::tail( 400 );
+		$log  = DBB_Logger::current_file();
+		?>
+		<div class="wrap dbb-wrap">
+			<h1><?php esc_html_e( 'Doktor Brown Backup — Tanılama / Loglar', 'doktor-brown-backup' ); ?></h1>
+
+			<p>
+				<a class="button button-primary" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=dbb_download_log' ), 'dbb_download_log' ) ); ?>"><?php esc_html_e( 'Log dosyasını indir', 'doktor-brown-backup' ); ?></a>
+				<a class="button" href="<?php echo esc_url( admin_url( 'admin.php?page=dbb-logs' ) ); ?>"><?php esc_html_e( 'Yenile', 'doktor-brown-backup' ); ?></a>
+				<a class="button dbb-clear-log" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=dbb_clear_log' ), 'dbb_clear_log' ) ); ?>"><?php esc_html_e( 'Logu temizle', 'doktor-brown-backup' ); ?></a>
+			</p>
+
+			<h2><?php esc_html_e( 'Sunucu ortamı', 'doktor-brown-backup' ); ?></h2>
+			<table class="widefat striped" style="max-width:900px">
+				<tbody>
+				<?php foreach ( $env as $key => $value ) : ?>
+					<tr>
+						<th style="width:240px"><code><?php echo esc_html( $key ); ?></code></th>
+						<td><?php echo esc_html( is_bool( $value ) ? ( $value ? 'true' : 'false' ) : (string) $value ); ?></td>
+					</tr>
+				<?php endforeach; ?>
+				</tbody>
+			</table>
+
+			<h2><?php esc_html_e( 'Son kayıtlar', 'doktor-brown-backup' ); ?></h2>
+			<p class="description">
+				<?php
+				printf(
+					/* translators: %s: log file path */
+					esc_html__( 'Dosya: %s', 'doktor-brown-backup' ),
+					'<code>' . esc_html( $log ) . '</code>'
+				);
+				?>
+			</p>
+			<textarea readonly rows="24" class="large-text code" style="font-family:monospace;white-space:pre;overflow:auto"><?php echo esc_textarea( $tail ? $tail : __( 'Henüz kayıt yok.', 'doktor-brown-backup' ) ); ?></textarea>
+
+			<p class="description"><?php esc_html_e( 'Loglar wp-content/dbb-logs içinde tutulur ve web erişimine kapalıdır. Parola/token alanları maskelenir.', 'doktor-brown-backup' ); ?></p>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Stream the current log file.
+	 *
+	 * @return void
+	 */
+	public static function handle_download_log() {
+		if ( ! current_user_can( DBB_Plugin::CAPABILITY ) || ! check_admin_referer( 'dbb_download_log' ) ) {
+			wp_die( esc_html__( 'Yetkisiz.', 'doktor-brown-backup' ) );
+		}
+		$file = DBB_Logger::current_file();
+		if ( ! is_file( $file ) ) {
+			wp_die( esc_html__( 'Log dosyası bulunamadı.', 'doktor-brown-backup' ) );
+		}
+		nocache_headers();
+		header( 'Content-Type: text/plain; charset=utf-8' );
+		header( 'Content-Disposition: attachment; filename="' . basename( $file ) . '"' );
+		header( 'Content-Length: ' . filesize( $file ) );
+		readfile( $file ); // phpcs:ignore
+		exit;
+	}
+
+	/**
+	 * Truncate the current log file.
+	 *
+	 * @return void
+	 */
+	public static function handle_clear_log() {
+		if ( ! current_user_can( DBB_Plugin::CAPABILITY ) || ! check_admin_referer( 'dbb_clear_log' ) ) {
+			wp_die( esc_html__( 'Yetkisiz.', 'doktor-brown-backup' ) );
+		}
+		$file = DBB_Logger::current_file();
+		if ( is_file( $file ) ) {
+			@file_put_contents( $file, '' ); // phpcs:ignore
+		}
+		DBB_Logger::info( 'log cleared by user', array( 'user_id' => get_current_user_id() ) );
+		wp_safe_redirect( admin_url( 'admin.php?page=dbb-logs' ) );
+		exit;
 	}
 }

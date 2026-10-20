@@ -26,7 +26,10 @@ class DBB_Filesystem {
 			'.git',
 			'wp-content/cache',
 			'wp-content/upgrade',
-			'wp-content/ai1wm-backups',
+			// Never include the destination's DB credentials in a portable archive.
+			'wp-config.php',
+			'wp-config-local.php',
+			'.user.ini',
 		);
 
 		/**

@@ -45,6 +45,9 @@ final class DBB_Plugin {
 	private function __construct() {
 		$this->define_storage();
 
+		require_once DBB_PATH . 'includes/class-dbb-logger.php';
+		DBB_Logger::init();
+
 		require_once DBB_PATH . 'includes/class-dbb-filesystem.php';
 		require_once DBB_PATH . 'includes/class-dbb-db.php';
 		require_once DBB_PATH . 'includes/class-dbb-replace.php';
@@ -58,9 +61,12 @@ final class DBB_Plugin {
 		$this->importer = new DBB_Importer();
 
 		add_action( 'plugins_loaded', array( $this, 'load_textdomain' ) );
+		add_action( 'admin_init', array( 'DBB_Logger', 'maybe_log_environment' ) );
 		add_action( 'admin_menu', array( 'DBB_Admin', 'register_menu' ) );
 		add_action( 'admin_enqueue_scripts', array( 'DBB_Admin', 'enqueue' ) );
 		add_action( 'admin_post_dbb_download', array( 'DBB_Admin', 'handle_download' ) );
+		add_action( 'admin_post_dbb_download_log', array( 'DBB_Admin', 'handle_download_log' ) );
+		add_action( 'admin_post_dbb_clear_log', array( 'DBB_Admin', 'handle_clear_log' ) );
 
 		// Write a local .htaccess guard the first time we run.
 		add_action( 'admin_init', array( __CLASS__, 'ensure_guards' ) );
@@ -86,6 +92,9 @@ final class DBB_Plugin {
 		if ( ! defined( 'DBB_TMP_DIR' ) ) {
 			define( 'DBB_TMP_DIR', WP_CONTENT_DIR . '/dbb-tmp' );
 		}
+		if ( ! defined( 'DBB_LOG_DIR' ) ) {
+			define( 'DBB_LOG_DIR', WP_CONTENT_DIR . '/dbb-logs' );
+		}
 	}
 
 	/**
@@ -104,7 +113,7 @@ final class DBB_Plugin {
 	 */
 	public static function activate() {
 		self::define_storage_public();
-		foreach ( array( DBB_BACKUPS_DIR, DBB_TMP_DIR ) as $dir ) {
+		foreach ( array( DBB_BACKUPS_DIR, DBB_TMP_DIR, DBB_LOG_DIR ) as $dir ) {
 			if ( ! file_exists( $dir ) ) {
 				wp_mkdir_p( $dir );
 			}
@@ -133,6 +142,9 @@ final class DBB_Plugin {
 		if ( ! defined( 'DBB_TMP_DIR' ) ) {
 			define( 'DBB_TMP_DIR', WP_CONTENT_DIR . '/dbb-tmp' );
 		}
+		if ( ! defined( 'DBB_LOG_DIR' ) ) {
+			define( 'DBB_LOG_DIR', WP_CONTENT_DIR . '/dbb-logs' );
+		}
 	}
 
 	/**
@@ -144,7 +156,7 @@ final class DBB_Plugin {
 		if ( ! current_user_can( self::CAPABILITY ) ) {
 			return;
 		}
-		foreach ( array( DBB_BACKUPS_DIR, DBB_TMP_DIR ) as $dir ) {
+		foreach ( array( DBB_BACKUPS_DIR, DBB_TMP_DIR, DBB_LOG_DIR ) as $dir ) {
 			if ( ! file_exists( $dir ) ) {
 				wp_mkdir_p( $dir );
 			}
@@ -184,10 +196,17 @@ final class DBB_Plugin {
 			'dbb_restore_backup' => array( $this->importer, 'ajax_restore' ),
 			'dbb_delete'        => array( 'DBB_Admin', 'ajax_delete' ),
 			'dbb_list'          => array( 'DBB_Admin', 'ajax_list' ),
+			'dbb_log_client'    => array( 'DBB_Admin', 'ajax_log_client' ),
 		);
 
 		foreach ( $actions as $action => $callback ) {
-			add_action( 'wp_ajax_' . $action, $callback );
+			add_action(
+				'wp_ajax_' . $action,
+				function () use ( $action, $callback ) {
+					DBB_Logger::request( $action );
+					call_user_func( $callback );
+				}
+			);
 		}
 	}
 
@@ -198,9 +217,11 @@ final class DBB_Plugin {
 	 */
 	public static function verify_request() {
 		if ( ! check_ajax_referer( 'dbb_ajax', 'nonce', false ) ) {
+			DBB_Logger::warn( 'nonce verification failed' );
 			wp_send_json_error( array( 'message' => __( 'Güvenlik doğrulaması başarısız. Sayfayı yenileyin.', 'doktor-brown-backup' ) ), 403 );
 		}
 		if ( ! current_user_can( self::CAPABILITY ) ) {
+			DBB_Logger::warn( 'capability check failed', array( 'user_id' => get_current_user_id() ) );
 			wp_send_json_error( array( 'message' => __( 'Yetkiniz yok.', 'doktor-brown-backup' ) ), 403 );
 		}
 	}

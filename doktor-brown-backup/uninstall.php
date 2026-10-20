@@ -16,6 +16,7 @@ if ( defined( 'DBB_REMOVE_DATA_ON_UNINSTALL' ) && DBB_REMOVE_DATA_ON_UNINSTALL )
 	$dirs = array(
 		WP_CONTENT_DIR . '/dbb-backups',
 		WP_CONTENT_DIR . '/dbb-tmp',
+		WP_CONTENT_DIR . '/dbb-logs',
 	);
 	foreach ( $dirs as $dir ) {
 		if ( ! is_dir( $dir ) ) {
